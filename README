@@ -1,0 +1,6 @@
+#exif
+
+A small library for parsing EXIF metadata from pictures
+
+The libary provides functions to analyse and display TIFF and EXIF tags found
+in the input data. It checks the validity of those tags and shows their values.
