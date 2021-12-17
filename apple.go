@@ -284,31 +284,29 @@ func getPlist( pList []byte ) ( *pNode, error ) {
     return getObject( topObjectStart )
 }
 
-func (ifd *ifdd) checkApplePLIST( name string, f func(o *pNode) ) error {
+func (ifd *ifdd) checkApplePLIST( name string, p func( interface{} ) ) error {
 
     if ifd.fType != _Undefined {
         return fmt.Errorf( "%s (PList): invalid type (%s)\n", name, getTiffTString( ifd.fType ) )
     }
     pList := ifd.getUnsignedBytes( )
-    o, err := getPlist( pList ); if err != nil {
-        return err
-    }
-    if ifd.desc.Print {
-        fmt.Printf( "    %s: plist\n", name )
-        if f != nil {
-            f( o )
-        } else {
-            o.print( "        " )
-        }
-    }
-    ifd.storeValue( ifd.newUnsignedByteValue( pList ) )
+    ifd.storeValue( ifd.newUnsignedByteValue( name, p, pList ) )
     return nil
 }
 
-func printRuntime( pList *pNode ) {
+func dumpPlist( v interface{} ) {
+    data := v.([]byte)
+    dumpData( "plist", "     ", data )
+}
 
-    o, ok := pList.value.(map[string]*pNode); if !ok {
-        fmt.Printf( "        Invalid runtime (not a dictionary)\n" )
+func printRuntime( v interface{} ) {
+    pList := v.([]byte)
+    root, err := getPlist( pList ); if err != nil {
+        fmt.Printf( "Invalid runtime (not a plist)\n" )
+        return
+    }
+    o, ok := root.value.(map[string]*pNode); if !ok {
+        fmt.Printf( "Invalid runtime (not a dictionary)\n" )
         return
     }
 /*
@@ -366,46 +364,52 @@ https://developer.apple.com/library/ios/documentation/CoreMedia/Reference/CMTime
     }
 
     if fs != "" && value != 0.0 && scale != 0.0 {
-        fmt.Printf( "        Value : %f seconds (epoch %d) - %s\n", value/scale, epoch, fs )
+        fmt.Printf( "\n     Value : %f seconds (epoch %d) - %s\n", value/scale, epoch, fs )
     }
 }
 
+const (
+    _APPLE_MAKER_SIGNATURE = "Apple iOS\x00"
+    _APPLE_MAKER_SIGNATURE_SIZE = 10
+    _APPLE_MAKER_ENDIAN_OFFSET = 12
+    _APPLE_MAKER_IFD_OFFSET = 14
+)
+
 func (ifd *ifdd) checkAppleAccelerationVector( ) error {
-    if ifd.fType != _SignedRational {
-        return fmt.Errorf( "AccelerationVector: invalid type (%s)\n", getTiffTString( ifd.fType ) )
-    }
-    if ifd.fCount != 3 {
-        return fmt.Errorf( "AccelerationVector: invalid count (%d)\n", ifd.fCount )
-    }
+    v, err := ifd.checkSignedRationals( 3 )
+    if err == nil {
+        p := func( v interface{} ) {
+            av := v.([]signedRational)
+    /*
+        AccelerationVector
+        XYZ coordinates of the acceleration vector in units of g.  As viewed from
+        the front of the phone, positive X is toward the left side, positive Y is
+        toward the bottom, and positive Z points into the face of the phone
 
-/*
-    AccelerationVector
-    XYZ coordinates of the acceleration vector in units of g.  As viewed from
-    the front of the phone, positive X is toward the left side, positive Y is
-    toward the bottom, and positive Z points into the face of the phone
-
-    See
-http://nscookbook.com/2013/03/ios-programming-recipe-19-using-core-motion-to-access-gyro-and-accelerometer/
-*/
-    v := make( []signedRational, 3 )
-    offset := ifd.desc.getUnsignedLong( ifd.sOffset )
-    v[0] = ifd.desc.getSignedRational( offset )
-    v[1] = ifd.desc.getSignedRational( offset + _RationalSize )
-    v[2] = ifd.desc.getSignedRational( offset + (_RationalSize * 2) )
-    if ifd.desc.Print {
-        fmt.Printf( "      Acceleration Vector X: %d %d\n", v[0].Numerator, v[0].Denominator )
-        fmt.Printf( "      Acceleration Vector Y: %d %d\n", v[1].Numerator, v[1].Denominator )
-        fmt.Printf( "      Acceleration Vector Z: %d %d\n", v[2].Numerator, v[2].Denominator )
+        See
+    http://nscookbook.com/2013/03/ios-programming-recipe-19-using-core-motion-to-access-gyro-and-accelerometer/
+    */
+            fmt.Printf( "\n     Vector X: %f (%d/%d)\n",
+                        float32(av[0].Numerator)/float32(av[0].Denominator),
+                        av[0].Numerator, av[0].Denominator )
+            fmt.Printf( "     Vector Y: %f (%d/%d)\n",
+                        float32(av[1].Numerator)/float32(av[1].Denominator),
+                        av[1].Numerator, av[1].Denominator )
+            fmt.Printf( "     Vector Z: %f (%d/%d)\n",
+                        float32(av[2].Numerator)/float32(av[2].Denominator),
+                        av[2].Numerator, av[2].Denominator )
+        }
+        ifd.storeValue( ifd.newSignedRationalValue( "Acceleration Vectors", p, v ) )
     }
-    ifd.storeValue( ifd.newSignedRationalValue( v ) )
-    return nil
+    return err
 }
 
 func (ifd *ifdd) checkAppleImageType( ) error {
 //          = 0x000a  // 1 _SignedLong: 2=iPad mini 2, 3=HDR Image, 4=Original Image
-    var fait = func ( v int32 ) {
+    var fait = func ( v interface{} ) {
+        it := v.(int32)
         var s string
-        switch v {
+        switch it {
         case 2: s = "iPad mini 2"
         case 3: s = "HDR Image"
         case 4: s = "Original Image"
@@ -413,21 +417,22 @@ func (ifd *ifdd) checkAppleImageType( ) error {
         }
         fmt.Printf( "%s\n", s )
     }
-    return ifd.checkTiffSignedLong( "  Apple Image Type", fait )
+    return ifd.storeSignedLongs( "  Apple Image Type", 1, fait )
 }
 
 func (ifd *ifdd) checkAppleOrientation( ) error {
 // 1 _SignedLong Orientation? 0=landscape? 4=portrait?
-    var fao = func( v int32 ) {
+    var fao = func( v interface{} ) {
+        o := v.(int32)
         var s string
         switch v {
         case 0: s = "Landscape"
         case 4: s = "portrait"
         default: s = "?"
         }
-        fmt.Printf( "%s (%d)\n", s, v )
+        fmt.Printf( "%s (%d)\n", s, o )
     }
-    return ifd.checkTiffSignedLong( "  Apple Image orientation", fao )
+    return ifd.storeSignedLongs( "  Apple Image orientation", 1, fao )
 }
 
 func checkApple( ifd *ifdd ) error {
@@ -435,56 +440,56 @@ func checkApple( ifd *ifdd ) error {
 
     switch ifd.fTag {
     case _Apple001:
-        return ifd.checkTiffSignedLong( "  Apple #0001", nil )
+        return ifd.storeSignedLongs( "Apple #0001", 1, nil )
     case _Apple002:
-        return ifd.checkApplePLIST( "  Apple #0002", nil )
+        return ifd.checkApplePLIST( "Apple #0002", dumpPlist )
     case _AppleRunTime:
-        return ifd.checkApplePLIST( "  Apple RunTime", printRuntime )
+        return ifd.checkApplePLIST( "Apple RunTime", printRuntime )
     case _Apple004:
-        return ifd.checkTiffSignedLong( "  Apple #0004", nil )
+        return ifd.storeSignedLongs( "Apple #0004", 1, nil )
     case _Apple005:
-        return ifd.checkTiffSignedLong( "  Apple #0005", nil )
+        return ifd.storeSignedLongs( "Apple #0005", 1, nil )
     case _Apple006:
-        return ifd.checkTiffSignedLong( "  Apple #0006", nil )
+        return ifd.storeSignedLongs( "Apple #0006", 1, nil )
     case _Apple007:
-        return ifd.checkTiffSignedLong( "  Apple #0007", nil )
+        return ifd.storeSignedLongs( "Apple #0007", 1, nil )
     case _AppleAccelerationVector:
         return ifd.checkAppleAccelerationVector( )
     case _Apple009:
-        return ifd.checkTiffSignedLong( "  Apple #0009", nil )
+        return ifd.storeSignedLongs( "Apple #0009", 1, nil )
     case _AppleHDRImageType:
         return ifd.checkAppleImageType( )
     case _BurstUUID:
-        return ifd.checkTiffAscii( "  Apple burst UUID" )
+        return ifd.storeAsciiString( "Apple burst UUID" )
     case _Apple00c:
-        return ifd.checkTiffUnsignedRationals( "  Apple #000c", 2 )
+        return ifd.storeUnsignedRationals( "Apple #000c", 2, nil )
     case _Apple00d:
-        return ifd.checkTiffSignedLong( "  Apple #000d", nil )
+        return ifd.storeSignedLongs( "Apple #000d", 1, nil )
     case _AppleOrientation:
         return ifd.checkAppleOrientation( )
     case _Apple00f:
-        return ifd.checkTiffSignedLong( "  Apple #000f", nil )
+        return ifd.storeSignedLongs( "Apple #000f", 1, nil )
     case _Apple010:
-        return ifd.checkTiffSignedLong( "  Apple #0010", nil )
+        return ifd.storeSignedLongs( "Apple #0010", 1, nil )
     case _AppleMediaGroupUUID:
-        return ifd.checkTiffAscii( "  Apple Media Group UUID" )
+        return ifd.storeAsciiString( "Apple Media Group UUID" )
     case _Apple0014:
 //           = 0x0014  // 1 _SignedLong 1, 2, 3, 4, 5 (iPhone 6s, iOS 6.1)
-        return ifd.checkTiffSignedLong( "  Apple Device Type", nil )
+        return ifd.storeSignedLongs( "Apple Device Type", 1, nil )
     case _AppleImageUniqueID:
-        return ifd.checkTiffAscii( "  Apple Image UUID" )
+        return ifd.storeAsciiString( "Apple Image UUID" )
     case _Apple0016:
 //            = 0x0016  // 1 _ASCIIString [29]"AXZ6pMTOh2L+acSh4Kg630XCScoO\0"
-        return ifd.checkTiffAscii( "  Apple #0016" )
+        return ifd.storeAsciiString( "Apple #0016" )
     case _Apple0017:
-        return ifd.checkTiffSignedLong( "  Apple #0017", nil )
+        return ifd.storeSignedLongs( "Apple #0017", 1, nil )
     case _Apple0019:
-        return ifd.checkTiffSignedLong( "  Apple #0019", nil )
+        return ifd.storeSignedLongs( "Apple #0019", 1, nil )
     case _Apple001a:
 //             = 0x001a  // 1 _ASCIIString [6]"q825s\0"
-        return ifd.checkTiffAscii( "  Apple #001a" )
+        return ifd.storeAsciiString( "  Apple #001a" )
     case _Apple001f:
-        return ifd.checkTiffSignedLong( "  Apple #001f", nil )
+        return ifd.storeSignedLongs( "  Apple #001f", 1, nil )
     default:
         fmt.Printf( "      Apple tag %#02x fType %d fCount %d fOffset %#04x\n",
                     ifd.fTag, ifd.fType, ifd.fCount, ifd.sOffset )
@@ -512,7 +517,7 @@ func (av *appleValue) serializeEntry( w io.Writer ) (err error) {
     if sz == 0 {
         fmt.Printf( "ifd %d Getting Apple maker note size @offset %08x\n",
                     av.ifd.id, av.ifd.dOffset )
-        _, err = av.v.root.serializeEntries( io.Discard, 14 )
+        _, err = av.v.root.serializeEntries( io.Discard, _APPLE_MAKER_IFD_OFFSET )
         if err != nil {
             fmt.Printf( "ifd %d Apple maker note returned error %v\n",
                         av.ifd.id, err )
@@ -538,16 +543,20 @@ func (av *appleValue)serializeData( w io.Writer ) (err error) {
     if err != nil {
         return
     }
-    _, err = av.v.root.serializeEntries( w, /*av.ifd.dOffset*/ 14 )
+    _, err = av.v.root.serializeEntries( w, _APPLE_MAKER_IFD_OFFSET )
     if err != nil {
         return
     }
-    _, err = av.v.root.serializeDataArea( w, /*av.ifd.dOffset*/ 14 )
+    _, err = av.v.root.serializeDataArea( w, _APPLE_MAKER_IFD_OFFSET )
     if err != nil {
         return
     }
     av.ifd.dOffset += av.v.root.dSize
     return
+}
+
+func (av *appleValue)format( w io.Writer ) {
+    return  // Do nothing. Maker note will be separately formatted.
 }
 
 func (ifd *ifdd) processAppleMakerNote( offset uint32 ) error {
@@ -559,7 +568,9 @@ func (ifd *ifdd) processAppleMakerNote( offset uint32 ) error {
     // before mapping to a regular IFD structure: 2-byte number of entries
     // in the IFD followed by the regular IFD entries and IFD data, but no
     // next IFD offset at the end.
-    size, endian, err := getEndianess( ifd.desc.data[offset + 12:offset+ifd.fCount - 12] )
+    endian, err := getEndianess(
+                ifd.desc.data[offset + _APPLE_MAKER_ENDIAN_OFFSET:
+                              offset+ifd.fCount - _APPLE_MAKER_ENDIAN_OFFSET] )
     if err != nil {
         return err
     }
@@ -569,12 +580,11 @@ func (ifd *ifdd) processAppleMakerNote( offset uint32 ) error {
     mknd.endian = endian
     mknd.Print = ifd.desc.Print
 
-    fmt.Printf( "Apple maker notes: origin %#04x start %#04x, end %#04x, endian %v\n",
-                offset, 12 + size, offset + ifd.fCount, endian )
+//    fmt.Printf( "Apple maker notes: origin %#04x start %#04x, end %#04x, endian %v\n",
+//                offset, 14, offset + ifd.fCount, endian )
 //    dumpData( "    MakerNote", "      ", ifd.desc.data[offset:offset+ifd.fCount] )
-    fmt.Printf("      ---------------------------- APPLE MAKER NOTES ----------------------------\n")
     var apple *ifdd
-    _, apple, err = mknd.checkIFD( _MAKER, 12 + size, checkApple )
+    _, apple, err = mknd.checkIFD( MAKER, _APPLE_MAKER_IFD_OFFSET, checkApple )
     if err != nil {
         return err
     }
@@ -583,23 +593,17 @@ func (ifd *ifdd) processAppleMakerNote( offset uint32 ) error {
 
     mknd.root = apple
     ifd.storeValue( ifd.newAppleValue( mknd ) )
-
-    fmt.Printf("      ----------------------------------------------------------------------------\n")
-    fmt.Printf( "Returning to EXIFF IFD\n" )
+    ifd.desc.ifds[MAKER] = apple
     return err
 }
 
-func (ifd *ifdd) tryAppleMakerNote( offset uint32 ) ( func( uint32 ) error ) {
+func tryAppleMakerNote( ifd *ifdd, offset uint32 ) ( func( uint32 ) error ) {
 
-    if bytes.Equal( ifd.desc.data[offset:offset+10],
-                    []byte( "Apple iOS\x00" ) ) {
-        fmt.Printf("    MakerNote: Apple iOS\n" )
+    if bytes.Equal( ifd.desc.data[offset:offset+_APPLE_MAKER_SIGNATURE_SIZE],
+                    []byte( _APPLE_MAKER_SIGNATURE ) ) {
+//        fmt.Printf("    MakerNote: Apple iOS\n" )
         return ifd.processAppleMakerNote
     }
-//    if ifd.desc.Print {
-//        dumpData( "    MakerNote", "      ", ifd.desc.data[offset:offset+ifd.fCount] )
-//    }
-
     return nil
 }
 
