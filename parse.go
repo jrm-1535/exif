@@ -5,204 +5,9 @@ import (
     "fmt"
     "bytes"
     "strings"
-    "encoding/binary"
-    "os"        // temporarily
 )
 
-/*
-    check functions are always called with a valid entry (fTag, fType, fCount
-    and sOffset pointing at the value|offset of an IFD entry. They check for a
-    valid type and count (if appropriate), and if no error was found, print
-    name and value (if requested) and store the ifd value in the current ifd.
-*/ 
-
-func (ifd *ifdd) checkUndefinedAsByte( name string, f func( v byte) ) error {
-    if ifd.fType != _Undefined {
-        return fmt.Errorf( "%s: invalid type (%s)\n", name, getTiffTString( ifd.fType ) )
-    }
-    if ifd.fCount != 1 {
-        return fmt.Errorf( "%s: incorrect count (%d)\n", name, ifd.fCount )
-    }
-    value := ifd.desc.getByte( ifd.sOffset )
-    if ifd.desc.Print {
-        if f == nil {
-            fmt.Printf( "    %s: %d\n", name, value )
-        } else {
-            fmt.Printf( "    %s: ", name )
-            f( value )
-        }
-    }
-    ifd.storeValue( ifd.newUnsignedByteValue( []byte{ value } ) )
-    return nil
-}
-
-func (ifd *ifdd) checkTiffAscii( name string ) error {
-    if ifd.fType != _ASCIIString {
-        return fmt.Errorf( "%s: invalid type (%s)\n",
-                           name, getTiffTString( ifd.fType ) )
-    }
-    offset := ifd.sOffset
-    if ifd.fCount > 4 {
-        offset = ifd.desc.getUnsignedLong( ifd.sOffset )
-    }
-    text := ifd.desc.getASCIIString( offset, ifd.fCount )
-    if ifd.desc.Print {
-        fmt.Printf( "    %s: %s\n", name, text )
-    }
-    ifd.storeValue( ifd.newAsciiStringValue( text ) )
-    return nil
-}
-
-func (ifd *ifdd) checkTiffUnsignedShort( name string, f func( v uint16) ) error {
-    if ifd.fType != _UnsignedShort {
-        return fmt.Errorf( "%s: invalid type (%s)\n", name, getTiffTString( ifd.fType ) )
-    }
-    if ifd.fCount != 1 {
-        return fmt.Errorf( "%s: invalid count (%d)\n", name, ifd.fCount )
-    }
-    value := ifd.desc.getUnsignedShort( ifd.sOffset )
-    if ifd.desc.Print {
-        if f == nil {
-            fmt.Printf( "    %s: %d\n", name, value )
-        } else {
-            fmt.Printf( "    %s: ", name )
-            f( value )
-        }        
-    }
-    ifd.storeValue( ifd.newUnsignedShortValue( []uint16{ value } ) )
-    return nil
-}
-
-func (ifd *ifdd) checkTiffUnsignedShorts( name string ) error {
-    if ifd.fType != _UnsignedShort {
-        return fmt.Errorf( "%s: invalid type (%s)\n",
-                            name, getTiffTString( ifd.fType ) )
-    }
-    values := ifd.getUnsignedShorts( )
-    if ifd.desc.Print {
-        fmt.Printf( "    %s:", name )
-        for _, v := range values {
-            fmt.Printf( " %d", v )
-        }
-        fmt.Printf( "\n");
-    }
-    ifd.storeValue( ifd.newUnsignedShortValue( values ) )
-    return nil
-}
-
-func (ifd *ifdd) checkTiffUnsignedLong( name string, f func( v uint32) ) error {
-    if ifd.fType != _UnsignedLong {
-        return fmt.Errorf( "%s: invalid type (%s)\n", name, getTiffTString( ifd.fType ) )
-    }
-    if ifd.fCount != 1 {
-        return fmt.Errorf( "%s: invalid count (%d)\n", name, ifd.fCount )
-    }
-    value := ifd.desc.getUnsignedLong( ifd.sOffset )
-    if ifd.desc.Print {
-        if f == nil {
-            fmt.Printf( "    %s: %d\n", name, value )
-        } else {
-            fmt.Printf( "    %s: ", name )
-            f( value )
-        }
-    }
-    ifd.storeValue( ifd.newUnsignedLongValue( []uint32{ value } ) )
-    return nil
-}
-
-func (ifd *ifdd) checkTiffSignedLong( name string, f func( v int32) ) error {
-    if ifd.fType != _SignedLong {
-        return fmt.Errorf( "%s: invalid type (%s)\n", name, getTiffTString( ifd.fType ) )
-    }
-    if ifd.fCount != 1 {
-        return fmt.Errorf( "%s: invalid count (%d)\n", name, ifd.fCount )
-    }
-    value := ifd.desc.getSignedLong( ifd.sOffset )
-    if ifd.desc.Print {
-        if f == nil {
-            fmt.Printf( "    %s: %d\n", name, value )
-        } else {
-            fmt.Printf( "    %s: ", name )
-            f( value )
-        }        
-    }
-    ifd.storeValue( ifd.newSignedLongValue( []int32{ value } ) )
-    return nil
-}
-
-func (ifd *ifdd) checkTiffUnsignedRational( name string,
-                                           f func( v unsignedRational ) ) error {
-    if ifd.fType != _UnsignedRational {
-        return fmt.Errorf( "%s: invalid type (%s)\n",
-                            name, getTiffTString( ifd.fType ) )
-    }
-    if ifd.fCount != 1 {
-        return fmt.Errorf( "%s: invalid count (%d)\n", name, ifd.fCount )
-    }
-    // a rational never fits directly in valOffset (requires more than 4 bytes)
-    offset := ifd.desc.getUnsignedLong( ifd.sOffset )
-    v := ifd.desc.getUnsignedRational( offset )
-    if ifd.desc.Print {
-        if f == nil {
-            fmt.Printf( "    %s: %d/%d=%f\n", name, v.Numerator, v.Denominator,
-                        float32(v.Numerator)/float32(v.Denominator) )
-        } else {
-            fmt.Printf( "    %s: ", name )
-            f( v )
-        }
-    }
-    ifd.storeValue( ifd.newUnsignedRationalValue( []unsignedRational{ v } ) )
-    return nil
-}
-
-func (ifd *ifdd) checkTiffSignedRational( name string,
-                                         f func( v signedRational ) ) error {
-    if ifd.fType != _SignedRational {
-        return fmt.Errorf( "%s: invalid type (%s)\n",
-                            name, getTiffTString( ifd.fType ) )
-    }
-    if ifd.fCount != 1 {
-        return fmt.Errorf( "%s: invalid count (%d)\n", name, ifd.fCount )
-    }
-    // a rational never fits directly in valOffset (requires more than 4 bytes)
-    offset := ifd.desc.getUnsignedLong( ifd.sOffset )
-    v := ifd.desc.getSignedRational( offset )
-    if ifd.desc.Print {
-        if f == nil {
-            fmt.Printf( "    %s: %d/%d=%f\n", name, v.Numerator, v.Denominator,
-                        float32(v.Numerator)/float32(v.Denominator) )
-        } else {
-            fmt.Printf( "    %s: ", name )
-            f( v )
-        }
-    }
-    ifd.storeValue( ifd.newSignedRationalValue( []signedRational{ v } ) )
-    return nil
-}
-
-func (ifd *ifdd) checkTiffUnsignedRationals( name string, count uint32 ) error {
-    if ifd.fType != _UnsignedRational {
-        return fmt.Errorf( "%s: invalid type (%s)\n",
-                            name, getTiffTString( ifd.fType ) )
-    }
-    if ifd.fCount != count {
-        return fmt.Errorf( "%s: invalid count (%d)\n", name, ifd.fCount )
-    }
-    rOffset := ifd.desc.getUnsignedLong( ifd.sOffset )
-    values := ifd.desc.getUnsignedRationals( rOffset, ifd.fCount )
-    fmt.Printf( "    %s:", name )
-    if ifd.desc.Print {
-        for _, v := range values {
-            fmt.Printf( " %d/%d", v.Numerator, v.Denominator,
-                        float32(v.Numerator)/float32(v.Denominator) )
-        }
-        fmt.Printf( "\n");
-    }
-    ifd.storeValue( ifd.newUnsignedRationalValue( values ) )
-    return nil
-}
-
-const (                                     // _PRIMARY & _THUMBNAIL IFD tags
+const (                                     // PRIMARY & THUMBNAIL IFD tags
 //    _NewSubfileType             = 0xfe    // unused in Exif files
 //    _SubfileType                = 0xff    // unused in Exif files
     _ImageWidth                 = 0x100
@@ -298,35 +103,32 @@ const (                                     // _PRIMARY & _THUMBNAIL IFD tags
     _Padding                    = 0xea1c    // May be used in IFD0, IFD1 and Exif IFD?
 )
 
-func (ifd *ifdd) checkTiffCompression( ) error {
+func (ifd *ifdd) storeTiffCompression( ) error {
 /*
     Exif2-2: optional in Primary IFD and in thumbnail IFD
 When a primary image is JPEG compressed, this designation is not necessary and is omitted.
 When thumbnails use JPEG compression, this tag value is set to 6.
 */
-    fmtCompression := func( v uint16 ) {
-        var cString string
+    c, err := ifd.checkUnsignedShorts( 1 )
+    if err == nil {
         var cType Compression
-        switch( v ) {
-        case 1: cString = "No compression"; cType = NotCompressed
-        case 2: cString = "CCITT 1D modified Huffman RLE"; cType = CCITT_1D
-        case 3: cString = "CCITT Group 3 fax encoding"; cType = CCITT_Group3
-        case 4: cString = "CCITT Group 4 fax encoding"; cType = CCITT_Group4
-        case 5: cString = "LZW"; cType = LZW
-        case 6: cString = "JPEG"; cType = JPEG
-        case 7: cString = "JPEG (Technote2)"; cType = JPEG_Technote2
-        case 8: cString = "Deflate"; cType = Deflate
-        case 9: cString = "RFC 2301 (black and white JBIG)."; cType = RFC_2301_BW_JBIG
-        case 10: cString = "RFC 2301 (color JBIG)."; cType = RFC_2301_Color_JBIG
-        case 32773: cString = "PackBits compression (Macintosh RLE)"; cType = PackBits
+        switch( c[0] ) {
+        case 1: cType = NotCompressed
+        case 2: cType = CCITT_1D
+        case 3: cType = CCITT_Group3
+        case 4: cType = CCITT_Group4
+        case 5: cType = LZW
+        case 6: cType = JPEG
+        case 7: cType = JPEG_Technote2
+        case 8: cType = Deflate
+        case 9: cType = RFC_2301_BW_JBIG
+        case 10: cType = RFC_2301_Color_JBIG
+        case 32773: cType = PackBits
         default:
-            fmt.Printf( "Illegal compression (%d)\n", v )
-            cType = Undefined
-            return
+            return fmt.Errorf( "Illegal compression (%d)\n", c[0] )
         }
-        fmt.Printf( "%s\n", cString )
-        if ifd.id == _PRIMARY {
-            if v != 6 {
+        if ifd.id == PRIMARY {
+            if cType != JPEG {
                 fmt.Printf("    Warning: non-JPEG compression specified in a JPEG file\n" )
             } else {
                 fmt.Printf("    Warning: Exif2-2 specifies that in case of JPEG picture compression be omited\n")
@@ -334,14 +136,36 @@ When thumbnails use JPEG compression, this tag value is set to 6.
         } else {    // _THUMBNAIL
             ifd.desc.tType = cType    // remember thumnail compression type
         }
+
+        fmtCompression := func( v interface{} ) {
+            c := v.([]uint16)
+            var cString string
+            switch( c[0] ) {
+            case 1: cString = "No compression"
+            case 2: cString = "CCITT 1D modified Huffman RLE"
+            case 3: cString = "CCITT Group 3 fax encoding"
+            case 4: cString = "CCITT Group 4 fax encoding"
+            case 5: cString = "LZW"
+            case 6: cString = "JPEG"
+            case 7: cString = "JPEG (Technote2)"
+            case 8: cString = "Deflate"
+            case 9: cString = "RFC 2301 (black and white JBIG)."
+            case 10: cString = "RFC 2301 (color JBIG)."
+            case 32773: cString = "PackBits compression (Macintosh RLE)"
+            }
+            fmt.Printf( "%s\n", cString )
+        }
+        ifd.storeValue( ifd.newUnsignedShortValue( "Compression", fmtCompression, c ) )
     }
-    return ifd.checkTiffUnsignedShort( "Compression", fmtCompression ) 
+    return err
 }
 
-func (ifd *ifdd) checkTiffOrientation( ) error {
-    fmtv := func( v uint16 ) {
+func (ifd *ifdd) storeTiffOrientation( ) error {
+
+    fmtv := func( v interface{} ) {
+        o := v.([]uint16)
         var oString string
-        switch( v ) {
+        switch( o[0] ) {
         case 1: oString = "Row #0 Top, Col #0 Left"
         case 2: oString = "Row #0 Top, Col #0 Right"
         case 3: oString = "Row #0 Bottom, Col #0 Right"
@@ -351,157 +175,133 @@ func (ifd *ifdd) checkTiffOrientation( ) error {
         case 7: oString = "Row #0 Right, Col #0 Bottom"
         case 8: oString = "Row #0 Left, Col #0 Bottom"
         default:
-            fmt.Printf( "Illegal orientation (%d)\n", v )
+            fmt.Printf( "Illegal orientation (%d)\n", o[0] )
             return
         }
         fmt.Printf( "%s\n", oString )
     }
-    return ifd.checkTiffUnsignedShort( "Orientation", fmtv )
+
+    return ifd.storeUnsignedShorts( "Orientation", 1, fmtv )
 }
 
-func (ifd *ifdd) checkTiffResolutionUnit( ) error {
-    fmtv := func( v uint16 ) {
+func (ifd *ifdd) storeTiffResolutionUnit( ) error {
+
+    fmtv := func( v interface{} ) {
+        ru := v.([]uint16)
         var ruString string
-        switch( v ) {
+        switch( ru[0] ) {
         case 1 : ruString = "Dots per Arbitrary unit"
         case 2 : ruString = "Dots per Inch"
         case 3 : ruString = "Dots per Cm"
         default:
-            fmt.Printf( "Illegal resolution unit (%d)\n", v )
+            fmt.Printf( "Illegal resolution unit (%d)\n", ru[0] )
             return
         }
         fmt.Printf( "%s\n", ruString )
     }
-    return ifd.checkTiffUnsignedShort( "ResolutionUnit", fmtv )
+    return ifd.storeUnsignedShorts( "Resolution Unit", 1, fmtv )
 }
 
-func (ifd *ifdd) checkTiffYCbCrPositioning( ) error {
-    fmtv := func( v uint16 ) {
+func (ifd *ifdd) storeTiffYCbCrPositioning( ) error {
+
+    fmtv := func( v interface{} ) {
+        pos := v.([]uint16)
         var posString string
-        switch( v ) {
+        switch( pos[0] ) {
         case 1 : posString = "Centered"
         case 2 : posString = "Cosited"
         default:
-            fmt.Printf( "Illegal positioning (%d)\n", v )
+            fmt.Printf( "Illegal positioning (%d)\n", pos[0] )
             return
         }
         fmt.Printf( "%s\n", posString )
     }
-    return ifd.checkTiffUnsignedShort( "YCbCrPositioning", fmtv )
+    return ifd.storeUnsignedShorts( "YCbCr Positioning", 1, fmtv )
 }
 
-func (ifd *ifdd) checkJPEGInterchangeFormat( ) error {
-    if ifd.fType != _UnsignedLong {
-        return fmt.Errorf( "checkJPEGInterchangeFormat: invalid type (%s)\n",
-                            getTiffTString( ifd.fType ) )
-    }
-    if ifd.fCount != 1 {
-        return fmt.Errorf( "checkJPEGInterchangeFormat: invalid count (%d)\n",
-                            ifd.fCount )
-    }
-    ifd.desc.tOffset = ifd.desc.getUnsignedLong( ifd.sOffset )
-    ifd.storeValue( ifd.newUnsignedLongValue( []uint32{ ifd.desc.tOffset } ) )
-    return nil
-}
-
-func (ifd *ifdd) checkJPEGInterchangeFormatLength( ) error {
-    if ifd.fType != _UnsignedLong {
-        return fmt.Errorf( "checkJPEGInterchangeFormatLength: invalid type (%s)\n",
-                           getTiffTString( ifd.fType ) )
-    }
-    if ifd.fCount != 1 {
-        return fmt.Errorf( "checkJPEGInterchangeFormatLength: invalid count (%d)\n",
-                           ifd.fCount )
-    }
-    ifd.desc.tLen = ifd.desc.getUnsignedLong( ifd.sOffset )
-    ifd.storeValue( ifd.newUnsignedLongValue( []uint32{ ifd.desc.tLen } ) )
-    return nil
-}
-
-func (ifd *ifdd) checkEmbeddedIfd( name string, id ifdId,
-                                   checkTags func( ifd *ifdd) error ) error {
-    if ifd.fType != _UnsignedLong {
-        return fmt.Errorf( "check %s: invalid type (%s)\n",
-                           name, getTiffTString( ifd.fType ) )
-    }
-    if ifd.fCount != 1 {
-        return fmt.Errorf( "check %d: invalid count (%d)\n",
-                           name, ifd.fCount )
-    }
-    // recusively process the embedded IFD here
-    offset := ifd.desc.getUnsignedLong( ifd.sOffset )
-    if ifd.desc.Print {
-        fmt.Printf( "  %s @%#04x\n", name, offset )
-    }
-
-    fmt.Printf("      ---------------------------------- %s ----------------------------------\n", name)
-    _, eIfd, err := ifd.desc.checkIFD( id, offset, checkTags )
-    fmt.Printf("      ----------------------------------------------------------------------------\n")
+func (ifd *ifdd) storeJPEGInterchangeFormat( ) error {
+    offset, err := ifd.checkUnsignedLongs( 1 )
     if err != nil {
-        return err
+        ifd.desc.tOffset = offset[0]
+        ifd.storeValue( ifd.newUnsignedLongValue( "", nil, offset ) )
     }
-    ifd.storeValue( ifd.newIfdValue( eIfd ) )
-    return nil
+    return err
 }
 
-func (ifd *ifdd) checkPadding( ) error {
-    if ifd.desc.Print {
-        fmt.Printf("    Padding: %d bytes - ignored\n", ifd.fCount )
+func (ifd *ifdd) storeJPEGInterchangeFormatLength( ) error {
+    offset, err := ifd.checkUnsignedLongs( 1 )
+    if err != nil {
+        ifd.desc.tLen = offset[0]
+        ifd.storeValue( ifd.newUnsignedLongValue( "", nil, offset ) )
     }
-    return nil
+    return err
+}
+
+func (ifd *ifdd) storeEmbeddedIfd( name string, id IfdId,
+                                   checkTags func( ifd *ifdd) error ) error {
+    offset, err := ifd.checkUnsignedLongs( 1 )
+    if err == nil {
+        // recusively process the embedded IFD here
+        _, eIfd, err := ifd.desc.checkIFD( id, offset[0], checkTags )
+        if err == nil {
+            ifd.storeValue( ifd.newIfdValue( eIfd ) )
+            ifd.desc.ifds[id] = ifd // store in flat ifd array
+        }
+    }
+    return err
 }
 
 func checkTiffTag( ifd *ifdd ) error {
-    fmt.Printf( "checkTiffTag: tag (%#04x) @offset %#04x type %s count %d\n",
-                 ifd.fTag, ifd.sOffset-8, getTiffTString( ifd.fType ), ifd.fCount )
+//    fmt.Printf( "checkTiffTag: tag (%#04x) @offset %#04x type %s count %d\n",
+//                 ifd.fTag, ifd.sOffset-8, getTiffTString( ifd.fType ), ifd.fCount )
     switch ifd.fTag {
     case _Compression:
-        return ifd.checkTiffCompression( )
+        return ifd.storeTiffCompression( )
     case _ImageDescription:
-        return ifd.checkTiffAscii( "ImageDescription" )
+        return ifd.storeAsciiString( "ImageDescription" )
     case _Make:
-        return ifd.checkTiffAscii( "Make" )
+        return ifd.storeAsciiString( "Make" )
     case _Model:
-        return ifd.checkTiffAscii( "Model" )
+        return ifd.storeAsciiString( "Model" )
     case _Orientation:
-        return ifd.checkTiffOrientation( )
+        return ifd.storeTiffOrientation( )
     case _XResolution:
-        return ifd.checkTiffUnsignedRational( "XResolution", nil )
+        return ifd.storeUnsignedRationals( "XResolution", 1, nil )
     case _YResolution:
-        return ifd.checkTiffUnsignedRational( "YResolution", nil )
+        return ifd.storeUnsignedRationals( "YResolution", 1, nil )
     case _ResolutionUnit:
-        return ifd.checkTiffResolutionUnit( )
+        return ifd.storeTiffResolutionUnit( )
     case _Software:
-        return ifd.checkTiffAscii( "Software" )
+        return ifd.storeAsciiString( "Software" )
     case _DateTime:
-        return ifd.checkTiffAscii( "Date" )
+        return ifd.storeAsciiString( "Date" )
     case _HostComputer:
-        return ifd.checkTiffAscii( "HostComputer" )
+        return ifd.storeAsciiString( "HostComputer" )
     case _YCbCrPositioning:
-        return ifd.checkTiffYCbCrPositioning( )
+        return ifd.storeTiffYCbCrPositioning( )
 
     case _JPEGInterchangeFormat:
-        return ifd.checkJPEGInterchangeFormat( )
+        return ifd.storeJPEGInterchangeFormat( )
 
     case _JPEGInterchangeFormatLength:
-        return ifd.checkJPEGInterchangeFormatLength( )
+        return ifd.storeJPEGInterchangeFormatLength( )
 
     case _Copyright:
-        return ifd.checkTiffAscii( "Copyright" )
+        return ifd.storeAsciiString( "Copyright" )
 
     case _ExifIFD:
-        return ifd.checkEmbeddedIfd( "Exif IFD", _EXIF, checkExifTag )
+        return ifd.storeEmbeddedIfd( "Exif IFD", EXIF, checkExifTag )
     case  _GpsIFD:
-        return ifd.checkEmbeddedIfd( "GPS IFD", _GPS, checkGpsTag )
+        return ifd.storeEmbeddedIfd( "GPS IFD", GPS, checkGpsTag )
 
     case _Padding:
-        return ifd.checkPadding( )
+        return nil
     }
     return fmt.Errorf( "checkTiffTag: unknown or unsupported tag (%#02x) @offset %#04x type %s count %d\n",
                        ifd.fTag, ifd.sOffset-8, getTiffTString( ifd.fType ), ifd.fCount )
 }
 
-const (                                     // _EXIF IFD specific tags
+const (                                     // EXIF IFD specific tags
     _ExposureTime               = 0x829a
 
     _FNumber                    = 0x829d
@@ -582,25 +382,24 @@ func (ifd *ifdd) checkExifVersion( ) error {
     if ifd.fType != _Undefined {
         return fmt.Errorf( "ExifVersion: invalid byte type (%s)\n", getTiffTString( ifd.fType ) )
     }
-    text := ifd.getAsciiString( )
-    if ifd.desc.Print {
-        fmt.Printf( "    ExifVersion: %s\n", text )
-    }
-    ifd.storeValue( ifd.newAsciiStringValue( text ) )
+    text := ifd.getUnsignedBytes( )
+    ifd.storeValue( ifd.newAsciiStringValue( "Exif Version", text ) )
     return nil
 }
 
 func (ifd *ifdd) checkExifExposureTime( ) error {
-    fmtv := func( v unsignedRational ) {
-        fmt.Printf( "%f seconds\n", float32(v.Numerator)/float32(v.Denominator) )
+    fmtv := func( v interface{} ) {
+        et := v.([]unsignedRational)
+        fmt.Printf( "%f seconds\n", float32(et[0].Numerator)/float32(et[0].Denominator) )
     }
-    return ifd.checkTiffUnsignedRational( "ExposureTime", fmtv )
+    return ifd.storeUnsignedRationals( "Exposure Time", 1, fmtv )
 }
 
 func (ifd *ifdd) checkExifExposureProgram( ) error {
-    fmtv := func( v uint16 ) {
+    fmtv := func( v interface{} ) {
+        ep := v.([]uint16)
         var epString string
-        switch v {
+        switch ep[0] {
         case 0 : epString = "Undefined"
         case 1 : epString = "Manual"
         case 2 : epString = "Normal program"
@@ -611,23 +410,17 @@ func (ifd *ifdd) checkExifExposureProgram( ) error {
         case 7 : epString = "Portrait mode (for closeup photos with the background out of focus)"
         case 8 : epString = "Landscape mode (for landscape photos with the background in focus) "
         default:
-            fmt.Printf( "Illegal Exposure Program (%d)\n", v )
-            return
+            epString = fmt.Sprintf( "Illegal Exposure Program (%d)\n", ep[0] )
         }
         fmt.Printf( "%s\n", epString )
     }
-    return ifd.checkTiffUnsignedShort( "ExposureProgram", fmtv )
+    return ifd.storeUnsignedShorts( "Exposure Program", 1, fmtv )
 }
 
 func (ifd *ifdd) checkExifComponentsConfiguration( ) error {
-    if ifd.fType != _Undefined {  // special case: tiff type is undefined, but it is actually bytes
-        return fmt.Errorf( "ComponentsConfiguration: invalid type (%s)\n", getTiffTString( ifd.fType ) )
-    }
-    if ifd.fCount != 4 {
-        return fmt.Errorf( "ComponentsConfiguration: invalid byte count (%d)\n", ifd.fCount )
-    }
-    bSlice := ifd.getUnsignedBytes(  )
-    if ifd.desc.Print {
+
+    p := func( v interface{} ) {
+        bSlice := v.([]byte)
         var config strings.Builder
         for _, b := range bSlice {
             switch b {
@@ -641,29 +434,32 @@ func (ifd *ifdd) checkExifComponentsConfiguration( ) error {
             default: config.WriteByte( '?' )
             }
         }
-        fmt.Printf( "    ComponentsConfiguration: %s\n", config.String() )
+        fmt.Printf( "%s\n", config.String() )
     }
-    ifd.storeValue( ifd.newUnsignedByteValue( bSlice ) )
-    return nil
+
+    return ifd.storeUndefinedAsBytes( "Components Configuration", 4, p )
 }
 
 func (ifd *ifdd) checkExifSubjectDistance( ) error {
-    fmtv := func( v unsignedRational ) {
-        if v.Numerator == 0 {
+    fmtv := func( v interface{} ) {
+        sd := v.([]unsignedRational)
+        if sd[0].Numerator == 0 {
             fmt.Printf( "Unknown\n" )
-        } else if v.Numerator == 0xffffffff {
+        } else if sd[0].Numerator == 0xffffffff {
             fmt.Printf( "Infinity\n" )
         } else {
-            fmt.Printf( "%f meters\n", float32(v.Numerator)/float32(v.Denominator) )
+            fmt.Printf( "%f meters\n",
+                        float32(sd[0].Numerator)/float32(sd[0].Denominator) )
         }
     }
-    return ifd.checkTiffUnsignedRational( "SubjectDistance", fmtv )
+    return ifd.storeUnsignedRationals( "Subject Distance", 1, fmtv )
 }
 
 func (ifd *ifdd) checkExifMeteringMode( ) error {
-    fmtv := func( v uint16 ) {
+    fmtv := func( v interface{} ) {
+        mm := v.([]uint16)
         var mmString string
-        switch v {
+        switch mm[0] {
         case 0 : mmString = "Unknown"
         case 1 : mmString = "Average"
         case 2 : mmString = "CenterWeightedAverage program"
@@ -673,18 +469,19 @@ func (ifd *ifdd) checkExifMeteringMode( ) error {
         case 6 : mmString = "Partial"
         case 255: mmString = "Other"
         default:
-            fmt.Printf( "Illegal Metering Mode (%d)\n", v )
+            fmt.Printf( "Illegal Metering Mode (%d)\n", mm[0] )
             return
         }
         fmt.Printf( "%s\n", mmString )
     }
-    return ifd.checkTiffUnsignedShort( "MeteringMode", fmtv )
+    return ifd.storeUnsignedShorts( "Metering Mode", 1, fmtv )
 }
 
 func (ifd *ifdd) checkExifLightSource( ) error {
-    fmtv := func( v uint16 ) {
+    fmtv := func( v interface{} ) {
+        ls := v.([]uint16)
         var lsString string
-        switch v {
+        switch ls[0] {
         case 0 : lsString = "Unknown"
         case 1 : lsString = "Daylight"
         case 2 : lsString = "Fluorescent"
@@ -707,18 +504,19 @@ func (ifd *ifdd) checkExifLightSource( ) error {
         case 24 : lsString = "ISO studio tungsten"
         case 255: lsString = "Other light source"
         default:
-            fmt.Printf( "Illegal light source (%d)\n", v )
+            fmt.Printf( "Illegal light source (%d)\n", ls[0] )
             return
         }
         fmt.Printf( "%s\n", lsString )
     }
-    return ifd.checkTiffUnsignedShort( "LightSource", fmtv )
+    return ifd.storeUnsignedShorts( "Light Source", 1, fmtv )
 }
 
 func (ifd *ifdd) checkExifFlash( ) error {
-    fmtv := func( v uint16 ) {
+    fmtv := func( v interface{} ) {
+        f := v.([]uint16)
         var fString string
-        switch v {
+        switch f[0] {
         case 0x00 : fString = "Flash did not fire"
         case 0x01 : fString = "Flash fired"
         case 0x05 : fString = "Flash fired, strobe return light not detected"
@@ -741,76 +539,46 @@ func (ifd *ifdd) checkExifFlash( ) error {
         case 0x5D : fString = "Flash fired, auto mode, return light not detected, red-eye reduction mode"
         case 0x5F : fString = "Flash fired, auto mode, return light detected, red-eye reduction mode"
         default:
-            fmt.Printf( "Illegal Flash (%#02x)\n", v )
+            fmt.Printf( "Illegal Flash (%#02x)\n", f[0] )
             return
         }
         fmt.Printf( "%s\n", fString )
     }
-    return ifd.checkTiffUnsignedShort( "Flash", fmtv )
+    return ifd.storeUnsignedShorts( "Flash", 1, fmtv )
 }
 
 func (ifd *ifdd) checkExifSubjectArea( ) error {
     if ifd.fCount < 2 && ifd.fCount > 4 {
         return fmt.Errorf( "Subject Area: invalid count (%d)\n", ifd.fCount )
     }
-    loc := ifd.getUnsignedShorts( )
-    if ifd.desc.Print {
-        switch ifd.fCount {
+
+    fmsa := func( v interface{} ) {
+        loc := v.([]uint16)
+        switch len(loc) {
         case 2:
-            fmt.Printf( "    Subject Area: Point x=%d, y=%d\n", loc[0], loc[1] )
+            fmt.Printf( "Point x=%d, y=%d\n", loc[0], loc[1] )
         case 3:
-            fmt.Printf( "    Subject Area: Circle center x=%d, y=%d diameter=%d\n",
+            fmt.Printf( "Circle center x=%d, y=%d diameter=%d\n",
                         loc[0], loc[1], loc[2] )
         case 4:
-            fmt.Printf( "    Subject Area: Rectangle center x=%d, y=%d width=%d height=%d\n",
+            fmt.Printf( "Rectangle center x=%d, y=%d width=%d height=%d\n",
                         loc[0], loc[1], loc[2], loc[3] )
         }
     }
-    ifd.storeValue( ifd.newUnsignedShortValue( loc ) )
-    return nil
-}
-
-func dumpData( header string, indent string, data []byte ) {
-    fmt.Printf( "%s:\n", header )
-    for i := 0; i < len(data); i += 16 {
-        fmt.Printf("%s%#04x: ", indent, i );
-        l := 16
-        if len(data)-i < 16 {
-            l = len(data)-i
-        }
-        var b strings.Builder
-        j := 0
-        for ; j < l; j++ {
-            if data[i+j] < 0x20 || data[i+j] > 0x7f {
-                b.WriteByte( '.' )
-            } else {
-                b.WriteByte( data[i+j] )
-            }
-            fmt.Printf( "%02x ", data[i+j] )
-        }
-        for ; j < 16; j++ {
-            fmt.Printf( "   " )
-        }
-        fmt.Printf( "%s\n", b.String() )
-    }
+    return ifd.storeUnsignedShorts( "Subject Area", 0, fmsa )
 }
 
 func (ifd *ifdd) checkExifMakerNote( ) error {
     if ifd.fType != _Undefined {
         return fmt.Errorf( "MakerNote: invalid type (%s)\n", getTiffTString( ifd.fType ) )
     }
-    if ifd.fCount < 4 {
-        if ifd.desc.Print {
-            dumpData( "    MakerNote", "      ", ifd.desc.data[ifd.sOffset:ifd.sOffset+ifd.fCount] )
-        }
-// FIXME: add generic makerNote value for unknown makers
-//        ifd.storeEntry( interface{}( ifd.desc.data[ifd.sOffset:ifd.sOffset+ifd.fCount] ) )
-        return nil
-    } else {
+    if ifd.fCount > 4 {
         offset := ifd.desc.getUnsignedLong( ifd.sOffset )
-        p := ifd.tryAppleMakerNote( offset )
-        if p != nil {
-            return p( offset )
+        for _, mn := range makerNotes {
+            p := mn.try( ifd, offset )
+            if p != nil {
+                return p( offset )
+            }
         }
     }
     return fmt.Errorf( "checkExifMakerNote: unknown maker\n")
@@ -825,40 +593,44 @@ func (ifd *ifdd) checkExifUserComment( ) error {
     }
     //  first 8 Bytes are the encoding
     offset := ifd.desc.getUnsignedLong( ifd.sOffset )
-    encoding := ifd.desc.getUnsignedBytes( offset, 8 )
-    switch encoding[0] {
-    case 0x41:  // ASCII?
-        if bytes.Equal( encoding, []byte{ 'A', 'S', 'C', 'I', 'I', 0, 0, 0 } ) {
-            if ifd.desc.Print {
-                fmt.Printf( "    UserComment: ITU-T T.50 IA5 (ASCII) [%s]\n", 
-                            string(ifd.desc.getUnsignedBytes( offset+8, ifd.fCount-8 )) )
+    ud := ifd.desc.data[offset:offset+ifd.fCount]
+
+    p := func( v interface{} ) {
+        ud := v.([]byte)
+        encoding := ud[0:8]
+        switch encoding[0] {
+        case 0x41:  // ASCII?
+            if bytes.Equal( encoding, []byte{ 'A', 'S', 'C', 'I', 'I', 0, 0, 0 } ) {
+                if ifd.desc.Print {
+                    fmt.Printf( " ITU-T T.50 IA5 (ASCII) [%s]\n", string(ud[8:]) )
+                }
             }
-        }
-    case 0x4a: // JIS?
-        if bytes.Equal( encoding, []byte{ 'J', 'I', 'S', 0, 0, 0, 0, 0 } ) {
-            if ifd.desc.Print {
-                fmt.Printf( "    UserComment: JIS X208-1990 (JIS):" )
-                dumpData( "    UserComment", "      ", ifd.desc.data[offset+8:offset+ifd.fCount] )
+        case 0x4a: // JIS?
+            if bytes.Equal( encoding, []byte{ 'J', 'I', 'S', 0, 0, 0, 0, 0 } ) {
+                if ifd.desc.Print {
+                    fmt.Printf( "JIS X208-1990 (JIS):" )
+                    dumpData( "    UserComment", "      ", ud[8:] )
+                }
             }
-        }
-    case 0x55:  // UNICODE?
-        if bytes.Equal( encoding, []byte{ 'U', 'N', 'I', 'C', 'O', 'D', 'E', 0 } ) {
-            if ifd.desc.Print {
-                fmt.Printf( "    UserComment: Unicode Standard:" )
-                dumpData( "    UserComment", "      ", ifd.desc.data[offset+8:offset+ifd.fCount] )
+        case 0x55:  // UNICODE?
+            if bytes.Equal( encoding, []byte{ 'U', 'N', 'I', 'C', 'O', 'D', 'E', 0 } ) {
+                if ifd.desc.Print {
+                    fmt.Printf( "Unicode Standard:" )
+                    dumpData( "    UserComment", "      ", ud[8:] )
+                }
             }
-        }
-    case 0x00:  // Undefined
-        if bytes.Equal( encoding, []byte{ 0, 0, 0, 0, 0, 0, 0, 0 } ) {
-            if ifd.desc.Print {
-                fmt.Printf( "    UserComment: Undefined encoding:" )
-                dumpData( "    UserComment", "      ", ifd.desc.data[offset+8:offset+ifd.fCount] )
+        case 0x00:  // Undefined
+            if bytes.Equal( encoding, []byte{ 0, 0, 0, 0, 0, 0, 0, 0 } ) {
+                if ifd.desc.Print {
+                    fmt.Printf( "Undefined encoding:" )
+                    dumpData( "    UserComment", "      ", ud[8:] )
+                }
             }
+        default:
+            fmt.Printf( "Invalid encoding\n" )
         }
-    default:
-        return fmt.Errorf( "UserComment: invalid encoding\n" )
     }
-    ifd.storeValue( ifd.newUnsignedByteValue( ifd.desc.data[ifd.sOffset:ifd.sOffset+ifd.fCount] ) )
+    ifd.storeValue( ifd.newUnsignedByteValue( "User Comment", p, ud ) )
     return nil
 }
 
@@ -869,42 +641,41 @@ func (ifd *ifdd) checkFlashpixVersion( ) error {
     if ifd.fCount != 4 {
         return fmt.Errorf( "FlashpixVersion: incorrect count (%d)\n", ifd.fCount )
     }
-    text := ifd.getAsciiString( )
-    if ifd.desc.Print {
-        fmt.Printf( "    FlashpixVersion: %s\n", text )
-    }
-    ifd.storeValue( ifd.newAsciiStringValue( text ) )
+    text := ifd.getUnsignedBytes( )
+    ifd.storeValue( ifd.newAsciiStringValue( "Flashpix Version", text ) )
     return nil
 }
 
 func (ifd *ifdd) checkExifColorSpace( ) error {
-    fmtv := func( v uint16 ) {
+    fmtv := func( v interface{} ) {
+        cs := v.([]uint16)
         var csString string
-        switch v {
+        switch cs[0] {
         case 1 : csString = "sRGB"
         case 65535: csString = "Uncalibrated"
         default:
-            fmt.Printf( "Illegal color space (%d)\n", v )
+            fmt.Printf( "Illegal color space (%d)\n", cs[0] )
             return
         }
         fmt.Printf( "%s\n", csString )
     }
-    return ifd.checkTiffUnsignedShort( "ColorSpace", fmtv )
+    return ifd.storeUnsignedShorts( "Color Space", 1, fmtv )
 }
 
 func (ifd *ifdd) checkExifDimension( name string ) error {
     if ifd.fType == _UnsignedShort {
-        return ifd.checkTiffUnsignedShort( name, nil )
+        return ifd.storeUnsignedShorts( name, 1, nil )
     } else if ifd.fType == _UnsignedLong {
-        return ifd.checkTiffUnsignedLong( name, nil )
+        return ifd.storeUnsignedLongs( name, 1, nil )
     }
     return fmt.Errorf( "%s: invalid type (%s)\n", name, getTiffTString( ifd.fType ) )
 }
 
 func (ifd *ifdd) checkExifSensingMethod( ) error {
-    fmtv := func( v uint16 ) {
+    fmtv := func( v interface{} ) {
+        sm := v.([]uint16)
         var smString string
-        switch v {
+        switch sm[0] {
         case 1 : smString = "Undefined"
         case 2 : smString = "One-chip color area sensor"
         case 3 : smString = "Two-chip color area sensor"
@@ -913,260 +684,260 @@ func (ifd *ifdd) checkExifSensingMethod( ) error {
         case 7 : smString = "Trilinear sensor"
         case 8 : smString = "Color sequential linear sensor"
         default:
-            fmt.Printf( "Illegal sensing method (%d)\n", v )
+            fmt.Printf( "Illegal sensing method (%d)\n", sm[0] )
             return
         }
         fmt.Printf( "%s\n", smString )
     }
-    return ifd.checkTiffUnsignedShort( "SensingMethod", fmtv )
+    return ifd.storeUnsignedShorts( "Sensing Method", 1, fmtv )
 }
 
 func (ifd *ifdd) checkExifFileSource( ) error {
-    fmtv := func( v byte ) {       // undfined but expect byte
-        if v != 3 {
-            fmt.Printf( "Illegal file source (%d)\n", v )
+    fmtv := func( v interface{} ) {  // undfined but expect byte
+        bs := v.([]byte)
+        if bs[0] != 3 {
+            fmt.Printf( "Illegal file source (%d)\n", bs[0] )
             return
         }
         fmt.Printf( "Digital Still Camera (DSC)\n" )
     }
-    return ifd.checkUndefinedAsByte( "FileSource", fmtv )
+    return ifd.storeUndefinedAsBytes( "File Source", 1, fmtv )
 }
 
 func (ifd *ifdd) checkExifSceneType( ) error {
-    fmtv := func( v byte ) {       // undefined but expect byte
+    fmtv := func( v interface{} ) {  // undefined but expect byte
+        bs := v.([]byte)
         var stString string
-        switch v {
+        switch bs[0] {
         case 1 : stString = "Directly photographed"
         default:
-            fmt.Printf( "Illegal scene type (%d)\n", v )
+            fmt.Printf( "Illegal scene type (%d)\n", bs[0] )
             return
         }
         fmt.Printf( "%s\n", stString )
     }
-    return ifd.checkUndefinedAsByte( "SceneType", fmtv )
+    return ifd.storeUndefinedAsBytes( "Scene Type", 1, fmtv )
 }
 
 func (ifd *ifdd) checkExifCFAPattern( ) error {
     if ifd.fType != _Undefined {
         return fmt.Errorf( "CFAPattern: invalid type (%s)\n", getTiffTString( ifd.fType ) )
     }
+    // Since the structure cannot fit in 4 bytes, its location is indicated by an offset
+    offset := ifd.desc.getUnsignedLong( ifd.sOffset )
+    bSlice := ifd.desc.getUnsignedBytes( offset, ifd.fCount )
+
     // structure describing the color filter array (CFA)
     // 2 short words: horizontal repeat pixel unit (h), vertical repeat pixel unit (v)
     // followed by h*v bytes, each byte value indicating a color:
     // 0 RED, 1 GREEN, 2 BLUE, 3 CYAN, 4 MAGENTA, 5 YELLOW, 6 WHITE
-    // Since the structure cannot fit in 4 bytes, its location is indicated by an offset
-    offset := ifd.desc.getUnsignedLong( ifd.sOffset )
-    h := ifd.desc.getUnsignedShort( offset )
-    v := ifd.desc.getUnsignedShort( offset + 2 )
+
+    hz := ifd.desc.getUnsignedShort( offset )
+    vt := ifd.desc.getUnsignedShort( offset + 2 )
     // however, it seems that older microsoft tools do not use the proper endianess,
     // so check here if the values are consistent with the total count:
-    var swap bool
-    if uint32(h) * uint32(v) != ifd.fCount - 4 { // if not try changing endianess
-        h1 := ((h & 0xff) << 8) + (h >> 8)
-        v1 := ((v & 0xff) << 8) + (v >> 8)
+    if uint32(hz) * uint32(vt) != ifd.fCount - 4 { // if not try changing endianess
+        h1 := ((hz & 0xff) << 8) + (hz >> 8)
+        v1 := ((vt & 0xff) << 8) + (vt >> 8)
         if ( uint32(h1) * uint32(v1) != ifd.fCount - 4 ) {
-            return fmt.Errorf( "CFAPattern: invalid repeat patterns(%d,%d)\n", h, v )
+            return fmt.Errorf( "CFAPattern: Invalid repeat patterns(%d,%d)\n", hz, vt )
         }
-        h = h1
-        v = v1
-        swap = true
+        hz, vt = h1, v1
+        fmt.Printf("CFAPattern: Warning: incorrect endianess\n")
     }
-    if ifd.desc.Print {
-        fmt.Printf( "    CFAPattern:" )
-    }
-    offset += 4
-    c := ifd.desc.getUnsignedBytes( offset, uint32(h) * uint32(v) )
 
-    for i := uint16(0); i < v; i++ {
-        fmt.Printf("\n      Row %d:", i )
-        for j := uint16(0); j < h; j++ {
-            var s string
-            switch c[(i*h)+j] {
-            case 0: s = "RED"
-            case 1: s = "GREEN"
-            case 2: s = "BLUE"
-            case 3: s = "CYAN"
-            case 4: s = "MAGENTA"
-            case 5: s = "YELLOW"
-            case 6: s = "WHITE"
-            default:
-                if ifd.desc.Print {
-                    fmt.Printf("\n")
+    // current h and v will still be accessible from f
+    p := func( v interface{} ) {
+        c := v.([]byte)
+        for i := uint16(4); i < vt; i++ {    // skip first 4 bytes 
+            fmt.Printf("\n      Row %d:", i )
+            for j := uint16(0); j < hz; j++ {
+                var s string
+                switch c[(i*hz)+j] {
+                case 0: s = "RED"
+                case 1: s = "GREEN"
+                case 2: s = "BLUE"
+                case 3: s = "CYAN"
+                case 4: s = "MAGENTA"
+                case 5: s = "YELLOW"
+                case 6: s = "WHITE"
+                default:
+                    fmt.Printf( "Invalid color (%d)\n", c[(i*hz)+j] )
+                    return
                 }
-                return fmt.Errorf( "CFAPattern: invalid color (%d)\n", c[(i*h)+j] )
-            }
-            if ifd.desc.Print {
                 fmt.Printf( " %s", s )
             }
         }
-    }
-    if ifd.desc.Print {
         fmt.Printf( "\n" )
     }
-    if swap {
-        fmt.Printf("      Warning: CFAPattern: incorrect endianess\n")
-    }
-    ifd.storeValue( ifd.newUnsignedByteValue( ifd.desc.data[ifd.sOffset:ifd.sOffset+ifd.fCount] ) )
+    ifd.storeValue( ifd.newUnsignedByteValue( "Color Filter Array Pattern", p, bSlice ) )
     return nil
 }
 
 func (ifd *ifdd) checkExifCustomRendered( ) error {
-    fmtv := func( v uint16 ) {
-        var crString string
-        switch v {
-        case 0 : crString = "Normal process"
-        case 1 : crString = "Custom process"
-        default:
-            fmt.Printf( "Illegal rendering process (%d)\n", v )
-            return
+    fmtv := func( v interface{} ) {
+        cr := v.([]uint16)
+        switch cr[0] {
+        case 0 : fmt.Printf( "Normal process\n" )
+        case 1 : fmt.Printf( "Custom process\n" )
+        default: fmt.Printf( "Illegal rendering process (%d)\n", cr[0] )
         }
-        fmt.Printf( "%s\n", crString )
     }
-    return ifd.checkTiffUnsignedShort( "CustomRendered", fmtv )
+    return ifd.storeUnsignedShorts( "Custom Rendered", 1, fmtv )
 }
 
 func (ifd *ifdd) checkExifExposureMode( ) error {
-    fmtv := func( v uint16 ) {
+    fmtv := func( v interface{} ) {
+        em := v.([]uint16)
         var emString string
-        switch v {
+        switch em[0] {
         case 0 : emString = "Auto exposure"
         case 1 : emString = "Manual exposure"
         case 3 : emString = "Auto bracket"
         default:
-            fmt.Printf( "Illegal Exposure mode (%d)\n", v )
+            fmt.Printf( "Illegal Exposure mode (%d)\n", em[0] )
             return
         }
         fmt.Printf( "%s\n", emString )
     }
-    return ifd.checkTiffUnsignedShort( "ExposureMode", fmtv )
+    return ifd.storeUnsignedShorts( "Exposure Mode", 1, fmtv )
 }
 
 func (ifd *ifdd) checkExifWhiteBalance( ) error {
-    fmtv := func( v uint16 ) {
+    fmtv := func( v interface{} ) {
+        wb := v.([]uint16)
         var wbString string
-        switch v {
+        switch wb[0] {
         case 0 : wbString = "Auto white balance"
         case 1 : wbString = "Manual white balance"
         default:
-            fmt.Printf( "Illegal white balance (%d)\n", v )
+            fmt.Printf( "Illegal white balance (%d)\n", wb[0] )
             return
         }
         fmt.Printf( "%s\n", wbString )
     }
-    return ifd.checkTiffUnsignedShort( "WhiteBalance", fmtv )
+    return ifd.storeUnsignedShorts( "White Balance", 1, fmtv )
 }
 
 func (ifd *ifdd) checkExifDigitalZoomRatio( ) error {
-    fmv := func( v unsignedRational ) {
-        if v.Numerator == 0 {
+    fmv := func( v interface{} ) {
+        dzr := v.([]unsignedRational)
+        if dzr[0].Numerator == 0 {
             fmt.Printf( "not used\n" )
-        } else if v.Denominator == 0 {
+        } else if dzr[0].Denominator == 0 {
             fmt.Printf( "invalid ratio Denominator (0)\n" )
         } else {
-            fmt.Printf( "%f\n", float32(v.Numerator)/float32(v.Denominator) )
+            fmt.Printf( "%f\n",
+                        float32(dzr[0].Numerator)/float32(dzr[0].Denominator) )
         }
     }
-    return ifd.checkTiffUnsignedRational( "DigitalZoomRatio", fmv )
+    return ifd.storeUnsignedRationals( "Digital-Zoom Ratio", 1, fmv )
 }
 
 func (ifd *ifdd) checkExifSceneCaptureType( ) error {
-    fmtv := func( v uint16 ) {
+    fmtv := func( v interface{} ) {
+        ct := v.([]uint16)
         var sctString string
-        switch v {
+        switch ct[0] {
         case 0 : sctString = "Standard"
         case 1 : sctString = "Landscape"
         case 2 : sctString = "Portrait"
         case 3 : sctString = "Night scene"
         default:
-            fmt.Printf( "Illegal scene capture type (%d)\n", v )
+            fmt.Printf( "Illegal scene capture type (%d)\n", ct[0] )
             return
         }
         fmt.Printf( "%s\n", sctString )
     }
-    return ifd.checkTiffUnsignedShort( "SceneCaptureType", fmtv )
+    return ifd.storeUnsignedShorts( "Scene-Capture Type", 1, fmtv )
 }
 
 func (ifd *ifdd) checkExifGainControl( ) error {
-    fmtv := func( v uint16 ) {
+    fmtv := func( v interface{} ) {
+        gc := v.([]uint16)
         var gcString string
-        switch v {
+        switch gc[0] {
         case 0 : gcString = "none"
         case 1 : gcString = "Low gain up"
         case 2 : gcString = "high gain up"
         case 3 : gcString = "low gain down"
         case 4 : gcString = "high gain down"
         default:
-            fmt.Printf( "Illegal gain control (%d)\n", v )
+            fmt.Printf( "Illegal gain control (%d)\n", gc[0] )
             return
         }
         fmt.Printf( "%s\n", gcString )
     }
-    return ifd.checkTiffUnsignedShort( "GainControl", fmtv )
+    return ifd.storeUnsignedShorts( "Gain Control", 1, fmtv )
 }
 
 func (ifd *ifdd) checkExifContrast( ) error {
-    fmtv := func( v uint16 ) {
+    fmtv := func( v interface{} ) {
+        c := v.([]uint16)
         var cString string
-        switch v {
+        switch c[0] {
         case 0 : cString = "Normal"
         case 1 : cString = "Soft"
         case 2 : cString = "Hard"
         default:
-            fmt.Printf( "Illegal contrast (%d)\n", v )
+            fmt.Printf( "Illegal contrast (%d)\n", c[0] )
             return
         }
         fmt.Printf( "%s\n", cString )
     }
-    return ifd.checkTiffUnsignedShort( "Contrast", fmtv )
+    return ifd.storeUnsignedShorts( "Contrast", 1, fmtv )
 }
 
 func (ifd *ifdd) checkExifSaturation( ) error {
-    fmtv := func( v uint16 ) {
+    fmtv := func( v interface{} ) {
+        s := v.([]uint16)
         var sString string
-        switch v {
+        switch s[0] {
         case 0 : sString = "Normal"
         case 1 : sString = "Low saturation"
         case 2 : sString = "High saturation"
         default:
-            fmt.Printf( "Illegal Saturation (%d)\n", v )
+            fmt.Printf( "Illegal Saturation (%d)\n", s[0] )
             return
         }
         fmt.Printf( "%s\n", sString )
     }
-    return ifd.checkTiffUnsignedShort( "Saturation", fmtv )
+    return ifd.storeUnsignedShorts( "Saturation", 1, fmtv )
 }
 
 func (ifd *ifdd) checkExifSharpness( ) error {
-    fmtv := func( v uint16 ) {
+    fmtv := func( v interface{} ) {
+        s := v.([]uint16)
         var sString string
-        switch v {
+        switch s[0] {
         case 0 : sString = "Normal"
         case 1 : sString = "Soft"
         case 2 : sString = "Hard"
         default:
-            fmt.Printf( "Illegal Sharpness (%d)\n", v )
+            fmt.Printf( "Illegal Sharpness (%d)\n", s[0] )
             return
         }
         fmt.Printf( "%s\n", sString )
     }
-    return ifd.checkTiffUnsignedShort( "Sharpness", fmtv )
+    return ifd.storeUnsignedShorts( "Sharpness", 1, fmtv )
 }
 
 func (ifd *ifdd) checkExifDistanceRange( ) error {
-    fmtv := func( v uint16 ) {
+    fmtv := func( v interface{} ) {
+        dr := v.([]uint16)
         var drString string
-        switch v {
+        switch dr[0] {
         case 0 : drString = "Unknown"
         case 1 : drString = "Macro"
         case 2 : drString = "Close View"
         case 3 : drString = "Distant View"
         default:
-            fmt.Printf( "Illegal Distance Range (%d)\n", v )
+            fmt.Printf( "Illegal Distance Range (%d)\n", dr[0] )
             return
         }
         fmt.Printf( "%s\n", drString )
     }
-    return ifd.checkTiffUnsignedShort( "DistanceRange", fmtv )
+    return ifd.storeUnsignedShorts( "Distance Range", 1, fmtv )
 }
 
 func (ifd *ifdd) checkExifLensSpecification( ) error {
@@ -1177,76 +948,68 @@ func (ifd *ifdd) checkExifLensSpecification( ) error {
 //  maximum F number in maximum focal length
 //  which are specification information for the lens that was used in photography.
 //  When the minimum F number is unknown, the notation is 0/0.
-    if ifd.fCount != 4 {
-        return fmt.Errorf( "LensSpecification: invalid count (%d)\n", ifd.fCount )
-    }
-    if ifd.fType != _UnsignedRational {
-        return fmt.Errorf( "LensSpecification: invalid type (%s)\n", getTiffTString( ifd.fType ) )
-    }
 
-    offset := ifd.desc.getUnsignedLong( ifd.sOffset )
-    specs :=  ifd.desc.getUnsignedRationals( offset, ifd.fCount )
-    if ifd.desc.Print {
-        fmt.Printf( "    LensSpecification:\n" )
-        fmt.Printf( "      minimum focal length: %d/%d=%f\n",
-                    specs[0].Numerator, specs[0].Denominator,
-                    float32(specs[0].Numerator)/float32(specs[0].Denominator) )
-        fmt.Printf( "      maximum focal length: %d/%d=%f\n",
-                    specs[1].Numerator, specs[1].Denominator,
-                    float32(specs[1].Numerator)/float32(specs[1].Denominator) )
-        fmt.Printf( "      minimum F number: %d/%d=%f\n",
-                    specs[2].Numerator, specs[2].Denominator,
-                    float32(specs[2].Numerator)/float32(specs[2].Denominator) )
-        fmt.Printf( "      maximum F number: %d/%d=%f\n",
-                    specs[3].Numerator, specs[3].Denominator,
-                    float32(specs[3].Numerator)/float32(specs[3].Denominator) )
+    fmls := func( v interface{} ) {
+        ls := v.([]unsignedRational)
+
+        fmt.Printf( "\n     minimum focal length: %d/%d=%f\n",
+                    ls[0].Numerator, ls[0].Denominator,
+                    float32(ls[0].Numerator)/float32(ls[0].Denominator) )
+        fmt.Printf( "     maximum focal length: %d/%d=%f\n",
+                    ls[1].Numerator, ls[1].Denominator,
+                    float32(ls[1].Numerator)/float32(ls[1].Denominator) )
+        fmt.Printf( "     minimum F number: %d/%d=%f\n",
+                    ls[2].Numerator, ls[2].Denominator,
+                    float32(ls[2].Numerator)/float32(ls[2].Denominator) )
+        fmt.Printf( "     maximum F number: %d/%d=%f\n",
+                    ls[3].Numerator, ls[3].Denominator,
+                    float32(ls[3].Numerator)/float32(ls[3].Denominator) )
     }
-    ifd.storeValue( ifd.newUnsignedRationalValue( specs ) )
-    return nil
+    return ifd.storeUnsignedRationals( "Lens Specification", 4, fmls )
 }
 
 func checkExifTag( ifd *ifdd ) error {
-    fmt.Printf( "checkExifTag: tag (%#04x) @offset %#04x type %s count %d\n",
-                 ifd.fTag, ifd.sOffset-8, getTiffTString( ifd.fType ), ifd.fCount )
+//    fmt.Printf( "checkExifTag: tag (%#04x) @offset %#04x type %s count %d\n",
+//                 ifd.fTag, ifd.sOffset-8, getTiffTString( ifd.fType ), ifd.fCount )
     switch ifd.fTag {
     case _ExposureTime:
         return ifd.checkExifExposureTime( )
     case _FNumber:
-        return ifd.checkTiffUnsignedRational( "FNumber", nil )
+        return ifd.storeUnsignedRationals( "FNumber", 1, nil )
     case _ExposureProgram:
         return ifd.checkExifExposureProgram( )
 
     case _ISOSpeedRatings:
-        return ifd.checkTiffUnsignedShorts( "ISOSpeedRatings" )
+        return ifd.storeUnsignedShorts( "ISO Speed Ratings", 1, nil )
     case _ExifVersion:
         return ifd.checkExifVersion( )
 
     case _DateTimeOriginal:
-        return ifd.checkTiffAscii( "DateTimeOriginal" )
+        return ifd.storeAsciiString( "DateTime Original" )
     case _DateTimeDigitized:
-        return ifd.checkTiffAscii( "DateTimeDigitized" )
+        return ifd.storeAsciiString( "DateTime Digitized" )
 
     case _OffsetTime:
-        return ifd.checkTiffAscii( "OffsetTime" )
+        return ifd.storeAsciiString( "Offset Time" )
     case _OffsetTimeOriginal:
-        return ifd.checkTiffAscii( "OffsetTimeOriginal" )
+        return ifd.storeAsciiString( "Offset Time Original" )
     case _OffsetTimeDigitized:
-        return ifd.checkTiffAscii( "OffsetTimeDigitized" )
+        return ifd.storeAsciiString( "Offset Time Digitized" )
 
     case _ComponentsConfiguration:
         return ifd.checkExifComponentsConfiguration( )
     case _CompressedBitsPerPixel:
-        return ifd.checkTiffUnsignedRational( "CompressedBitsPerPixel", nil )
+        return ifd.storeUnsignedRationals( "Compressed Bits Per Pixel", 1, nil )
     case _ShutterSpeedValue:
-        return ifd.checkTiffSignedRational( "ShutterSpeedValue", nil )
+        return ifd.storeSignedRationals( "Shutter Speed Value", 1, nil )
     case _ApertureValue:
-        return ifd.checkTiffUnsignedRational( "ApertureValue", nil )
+        return ifd.storeUnsignedRationals( "Aperture Value", 1, nil )
     case _BrightnessValue:
-        return ifd.checkTiffSignedRational( "BrightnessValue", nil )
+        return ifd.storeSignedRationals( "Brightness Value", 1, nil )
     case _ExposureBiasValue:
-        return ifd.checkTiffSignedRational( "ExposureBiasValue", nil )
+        return ifd.storeSignedRationals( "Exposure Bias Value", 1, nil )
     case _MaxApertureValue:
-        return ifd.checkTiffUnsignedRational( "MaxApertureValue", nil )
+        return ifd.storeUnsignedRationals( "Max Aperture Value", 1, nil )
     case _SubjectDistance:
         return ifd.checkExifSubjectDistance( )
     case _MeteringMode:
@@ -1256,7 +1019,7 @@ func checkExifTag( ifd *ifdd ) error {
     case _Flash:
         return ifd.checkExifFlash( )
     case _FocalLength:
-        return ifd.checkTiffUnsignedRational( "FocalLength", nil )
+        return ifd.storeUnsignedRationals( "Focal Length", 1, nil )
     case _SubjectArea:
         return ifd.checkExifSubjectArea( )
 
@@ -1265,20 +1028,20 @@ func checkExifTag( ifd *ifdd ) error {
     case _UserComment:
         return ifd.checkExifUserComment( )
     case _SubsecTime:
-        return ifd.checkTiffAscii( "SubsecTime" )
+        return ifd.storeAsciiString( "Subsec Time" )
     case _SubsecTimeOriginal:
-        return ifd.checkTiffAscii( "SubsecTimeOriginal" )
+        return ifd.storeAsciiString( "Subsec Time Original" )
     case _SubsecTimeDigitized:
-        return ifd.checkTiffAscii( "SubsecTimeDigitized" )
+        return ifd.storeAsciiString( "Subsec Time Digitized" )
     case _FlashpixVersion:
         return ifd.checkFlashpixVersion( )
 
     case _ColorSpace:
         return ifd.checkExifColorSpace( )
     case _PixelXDimension:
-        return ifd.checkExifDimension( "PixelXDimension" )
+        return ifd.checkExifDimension( "PixelX Dimension" )
     case _PixelYDimension:
-        return ifd.checkExifDimension( "PixelYDimension" )
+        return ifd.checkExifDimension( "PixelY Dimension" )
 
     case _SensingMethod:
         return ifd.checkExifSensingMethod( )
@@ -1297,7 +1060,7 @@ func checkExifTag( ifd *ifdd ) error {
     case _DigitalZoomRatio:
         return ifd.checkExifDigitalZoomRatio( )
     case _FocalLengthIn35mmFilm:
-        return ifd.checkTiffUnsignedShort( "FocalLengthIn35mmFilm", nil )
+        return ifd.storeUnsignedShorts( "Focal Length In 35mm Film", 1, nil )
     case _SceneCaptureType:
         return ifd.checkExifSceneCaptureType( )
     case _GainControl:
@@ -1311,19 +1074,19 @@ func checkExifTag( ifd *ifdd ) error {
     case _SubjectDistanceRange:
         return ifd.checkExifDistanceRange( )
     case _ImageUniqueID:
-        return ifd.checkTiffAscii( "ImageUniqueID " )
+        return ifd.storeAsciiString( "Image Unique ID " )
     case _LensSpecification:
         return ifd.checkExifLensSpecification( )
     case _LensMake:
-        return ifd.checkTiffAscii( "LensMake" )
+        return ifd.storeAsciiString( "Lens Make" )
     case _LensModel:
-        return ifd.checkTiffAscii( "LensModel" )
+        return ifd.storeAsciiString( "Lens Model" )
 
     case _InteroperabilityIFD:
-        return ifd.checkEmbeddedIfd( "IOP IFD", _IOP, checkIopTag )
+        return ifd.storeEmbeddedIfd( "IOP IFD", IOP, checkIopTag )
 
     case _Padding:
-        return ifd.checkPadding( )
+        return nil
     }
     return fmt.Errorf( "checkExifTag: unknown or unsupported tag (%#02x) @offset %#04x type %s count %d\n",
                        ifd.fTag, ifd.sOffset-8, getTiffTString( ifd.fType ), ifd.fCount )
@@ -1370,11 +1133,13 @@ func (ifd *ifdd) checkGPSVersionID( ) error {
     if ifd.fType != _UnsignedByte {
         return fmt.Errorf( "GPSVersionID: invalid type (%s)\n", getTiffTString( ifd.fType ) )
     }
+
     slc := ifd.desc.getUnsignedBytes( ifd.sOffset, ifd.fCount )  // 4 bytes fit in directory entry
-    if ifd.desc.Print {
-        fmt.Printf("    GPSVersionID: %d.%d.%d.%d\n", slc[0], slc[1], slc[2], slc[3] )
+    f := func( v interface{} ) {
+        slc := v.([]byte)
+        fmt.Printf("%d.%d.%d.%d\n", slc[0], slc[1], slc[2], slc[3] )
     }
-    ifd.storeValue( ifd.newUnsignedByteValue( slc ) )
+    ifd.storeValue( ifd.newUnsignedByteValue( "GPS Version ID", f, slc ) )
     return nil
 }
 
@@ -1394,25 +1159,26 @@ const (                                     // _IOP IFD tags
 
 func (ifd *ifdd) checkInteroperabilityVersion( ) error {
     if ifd.fType != _Undefined {
-        return fmt.Errorf( "InteroperabilityVersion: invalid type (%s)\n", getTiffTString( ifd.fType ) )
+        return fmt.Errorf( "InteroperabilityVersion: invalid type (%s)\n",
+                            getTiffTString( ifd.fType ) )
     }
     if ifd.fCount != 4 {
-        return fmt.Errorf( "InteroperabilityVersion: invalid count (%d)\n", ifd.fCount )
+        return fmt.Errorf( "InteroperabilityVersion: invalid count (%d)\n",
+                           ifd.fCount )
     }
-    // assume bytes
-    bs := ifd.getUnsignedBytes( )
-    if ifd.desc.Print {
-        fmt.Printf( "    InteroperabilityVersion: %#02x, %#02x, %#02x, %#02x\n",
-                    bs[0], bs[1], bs[2], bs[3] )
+    bs := ifd.getUnsignedBytes( )    // assuming bytes
+    f := func( v interface{} ) {
+        bs := v.([]byte)
+        fmt.Printf( "%#02x, %#02x, %#02x, %#02x\n", bs[0], bs[1], bs[2], bs[3] )
     }
-    ifd.storeValue( ifd.newUnsignedByteValue( bs ) )
+    ifd.storeValue( ifd.newUnsignedByteValue( "Interoperability Version", f, bs ) )
     return nil
 }
 
 func checkIopTag( ifd *ifdd ) error {
     switch ifd.fTag {
     case _InteroperabilityIndex:
-        return ifd.checkTiffAscii( "Interoperability" )
+        return ifd.storeAsciiString( "Interoperability" )
     case _InteroperabilityVersion:
         return ifd.checkInteroperabilityVersion( )
     default:
@@ -1427,8 +1193,8 @@ func checkIopTag( ifd *ifdd ) error {
 // checkIfd makes a new ifdd, check all entries and store the corresponding
 // values in the ifdd. It returns the offset of the next ifd in list (0 if
 // none), the newly created ifdd and an error if it failed.
-func (ed *Desc) checkIFD( id ifdId, start uint32,
-                          checkTags func(*ifdd) error ) ( uint32, *ifdd, error ) {
+func (d *Desc) checkIFD( id IfdId, start uint32,
+                         checkTags func(*ifdd) error ) ( uint32, *ifdd, error ) {
 
     /*
         Image File Directory starts with the number of following directory entries (2 bytes)
@@ -1437,19 +1203,19 @@ func (ed *Desc) checkIFD( id ifdId, start uint32,
     */
     ifd := new( ifdd )
     ifd.id = id
-    ifd.desc = ed
+    ifd.desc = d
 
-    nIfdEntries := ed.getUnsignedShort( start )
+    nIfdEntries := d.getUnsignedShort( start )
     ifd.sOffset = start + _ShortSize
     ifd.values = make( []serializer, 0, nIfdEntries )
 
-    fmt.Printf( "New IFD ID=%d: n entries %d first entry @ offset %#08x\n",
-                ifd.id, nIfdEntries, ifd.sOffset )
+//    fmt.Printf( "New IFD ID=%d: n entries %d first entry @ offset %#08x\n",
+//                ifd.id, nIfdEntries, ifd.sOffset )
 
     for i := uint16(0); i < nIfdEntries; i++ {
-        ifd.fTag = tTag(ed.getUnsignedShort( ifd.sOffset ))
-        ifd.fType = tType(ed.getUnsignedShort( ifd.sOffset + 2 ))
-        ifd.fCount = ed.getUnsignedLong( ifd.sOffset + 4 )
+        ifd.fTag = tTag(d.getUnsignedShort( ifd.sOffset ))
+        ifd.fType = tType(d.getUnsignedShort( ifd.sOffset + 2 ))
+        ifd.fCount = d.getUnsignedLong( ifd.sOffset + 4 )
         ifd.sOffset += 8
 
         err := checkTags( ifd )
@@ -1458,104 +1224,7 @@ func (ed *Desc) checkIFD( id ifdId, start uint32,
         }
         ifd.sOffset += 4
     }
-    offset := ed.getUnsignedLong( ifd.sOffset )  // next IFD offset in list
+    offset := d.getUnsignedLong( ifd.sOffset )  // next IFD offset in list
     return offset, ifd, nil
-}
-
-func getEndianess( data []byte ) ( size uint32, endian binary.ByteOrder, err error) {
-    size = 2
-    err = nil
-    endian = binary.BigEndian
-
-    if bytes.Equal( data[:2], []byte( "II" ) ) {
-        endian = binary.LittleEndian
-    } else if ! bytes.Equal( data[:2], []byte( "MM" ) ) {
-        err = fmt.Errorf( "exif: invalid TIFF header (unknown byte ordering: %v)\n", data[:2] )
-    }
-    return
-}
-
-func Parse( data []byte, start, dLen uint, ec *Control ) (*Desc, error) {
-    if ! bytes.Equal( data[start:start+6], []byte( "Exif\x00\x00" ) ) {
-        return nil, fmt.Errorf( "exif: invalid signature (%s)\n", string(data[0:6]) )
-    }
-
-    // temporary, save exif data into file - exif-src.txt
-    {
-	    f, err := os.OpenFile( "exif-src.bin", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.ModePerm)
-        if err != nil { return nil, err }
-        _, err = f.Write( data[start:start+dLen] )
-        if err != nil { return nil, err }
-        if err = f.Close( ); err != nil { return nil, err }
-        if err != nil { return nil, err }
-    }
-    // end of temporary stuff
-
-    ed := new( Desc )   // Exif\0\0 is followed immediately by TIFF header
-    ed.data = data[start+_originOffset:start+dLen-_originOffset] // starts @TIFF header
-    ed.Control = *ec
-
-    if ed.Print {
-        fmt.Printf( "APP1 (EXIF)\n" )
-    }
-
-    // TIFF header starts with 2 bytes indicating the byte ordering (little or big endian)
-    var err error
-    var offset uint32
-    offset, ed.endian, err = getEndianess( ed.data )
-    if err != nil {
-        return nil, err
-    }
-    // followed by 2-byte 0x002a (according to the endianess)
-    validTiff := ed.getUnsignedShort( offset )
-    if validTiff != 0x2a {
-        return nil, fmt.Errorf( "exif: invalid TIFF header (invalid identifier: %#02x)\n", validTiff )
-    }
-
-    // followed by Primary Image File directory (IFD) offset
-    offset = ed.getUnsignedLong( offset + 2 )
-//    ed.origin = offset
-
-    if ed.Print {
-        fmt.Printf( "  Primary Image metadata @%#04x\n", offset )
-        fmt.Printf("      ---------------------------------- IFD0 -----------------------------------\n")
-    }
-    offset, ed.root, err = ed.checkIFD( _PRIMARY, offset, checkTiffTag )
-    if err != nil { return nil, err }
-    if ed.Print {
-        fmt.Printf("      ----------------------------------------------------------------------------\n")
-    }
-
-    if offset != 0 {
-        if ed.Print {
-            fmt.Printf( "  Thumbnail Image metadata @%#04x\n", offset )
-            fmt.Printf("      -------------------------------- IFD1 --------------------------------------\n")
-        }
-        _, ed.root.next, err = ed.checkIFD( _THUMBNAIL, offset, checkTiffTag )
-        if err != nil { return nil, err }
-        if ed.Print {
-            fmt.Printf("      ----------------------------------------------------------------------------\n")
-        }
-    }
-
-    // temporary, save exif data into file - exif-dst.bin
-    {
-	    f, err := os.OpenFile( "exif-dst.bin", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.ModePerm)
-        if err != nil { return nil, err }
-        n, err := ed.Write( f )
-        if err != nil { return nil, err }
-        fmt.Printf( "wrote %d bytes to exif-dst.bin\n", n )
-        if err = f.Close( ); err != nil { return nil, err }
-        if err != nil { return nil, err }
-    }
-    return ed, nil
-}
-
-func (ed *Desc)GetThumbnail() (uint32, uint32, Compression) {
-    offset := ed.tOffset
-    if offset != 0 {
-        offset += _originOffset
-    }
-    return offset, ed.tLen, ed.tType
 }
 

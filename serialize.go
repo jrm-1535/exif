@@ -10,22 +10,19 @@ import (
 
 // Serialize Desc
 
-func (d *Desc)Write( w io.Writer ) (written uint32, err error) {
+func (d *Desc)serialize( w io.Writer ) (written int, err error) {
 
-    var nw int
-    if nw, err = w.Write( []byte( "Exif\x00\x00" ) ); err != nil {
+    if written, err = w.Write( []byte( "Exif\x00\x00" ) ); err != nil {
         return
     }
 
     var es string                // TIFF header starts here
     if d.endian == binary.BigEndian { es = "MM" } else { es = "II" }
-
-    written = uint32(nw)
-    nw, err = w.Write( []byte( es ) )
+    _, err = w.Write( []byte( es ) )
     if err != nil {
         return
     }
-    written += uint32(nw)
+    written += 2
 
     err = binary.Write( w, d.endian, uint16(0x002a) )
     if err != nil {
@@ -46,14 +43,14 @@ func (d *Desc)Write( w io.Writer ) (written uint32, err error) {
     }
 //fmt.Printf( "ifd0 entries use %d bytes\n", ns )
 //fmt.Printf( "after serializeEntries ifd0 dOffset=%d\n", d.root.dOffset )
-    written += ns
+    written += int(ns)
     ns, err = d.root.serializeDataArea( w, _headerSize )
     if err != nil {
         return
     }
 //fmt.Printf( "ifd0 data area uses %d bytes\n", ns )
 //fmt.Printf( "after serializeDataArea ifd0 dOffset=%d\n", d.root.dOffset )
-    written += ns
+    written += int(ns)
 //fmt.Printf("After ifd0, written=%d\n", written )
     if d.root.next != nil {    // store thumbnail IFD
         offset := d.root.dOffset
@@ -61,16 +58,17 @@ func (d *Desc)Write( w io.Writer ) (written uint32, err error) {
         if err != nil {
             return
         }
-        written += ns
+        written += int(ns)
         ns, err = d.root.next.serializeDataArea( w, offset )
         if err != nil {
             return
         }
-        written += ns
+        written += int(ns)
         if d.tOffset != 0 {    // store embedded thumnail data
+            var nw int
             nw, err = w.Write( d.data[d.tOffset:d.tOffset+d.tLen] )
             if err == nil {
-                written += uint32(nw)
+                written += nw
             }
         }
     }
@@ -205,7 +203,7 @@ func getSliceDataSize( sl interface{} ) uint32 {
 // This is the second phase of writing an IFD entry. It serializes an IFD entry
 // containing a slice of values (most common case) in the IFD data area.
 // The arguments are an io.Writer, and the slice values. 
-// if the value does fit in _valOffSize (4 bytes), the function does nothing.
+// If the value does fit in _valOffSize (4 bytes), the function does nothing.
 // The return value is an error indicating a failure.
 // By side effect the ifd dOffset is updated for next calls with the size to
 // be written later in the IFD data area or 0 if it fits in _valOffSize
@@ -224,5 +222,13 @@ func (ifd *ifdd)serializeSliceData( w io.Writer,
     }
     ifd.dOffset += size
     return
+}
+
+func (ifd *ifdd)format( w io.Writer ) error {
+
+    for i := 0; i < len(ifd.values); i++ {
+        ifd.values[i].format( w )
+    }
+    return nil
 }
 

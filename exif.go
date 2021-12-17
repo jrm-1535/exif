@@ -4,8 +4,10 @@ package exif
 import (
     "fmt"
     "bytes"
+    "strings"
     "encoding/binary"
-    "io"
+    "io/ioutil"
+    "os"
 )
 
 /*
@@ -72,6 +74,29 @@ type Control struct {
     Print bool
 }
 
+type IfdId  uint
+const (
+    PRIMARY IfdId = iota    // namespace for IFD0, first (TIFF) IFD
+    THUMBNAIL               // namespace for IFD1 (Thumbnail) pointed to by IFD0
+
+    EXIF                    // EXIF namespace, embedded in IFD0
+    GPS                     // GPS namespace, embedded in IFD0 
+
+    IOP                     // Interoperability namespace, embedded in EXIF IFD
+
+    MAKER                   // non-standard IFD for each maker, embedded in EXIF IFD
+)
+
+var ifdNames  = [...]string{ "Primary", "Thumbnail", "Exif",
+                             "GPS", "Interoperability", "Maker Note" }
+
+type maker  struct {
+    name    string
+    try     func( *ifdd, uint32 ) (func( uint32 ) error)
+}
+
+var makerNotes = [...]maker{ { "Apple", tryAppleMakerNote } }
+
 type Desc struct {
     data    []byte          // starts at TIFF header (origin after exif header)
     endian  binary.ByteOrder // endianess as defined in binary
@@ -80,110 +105,15 @@ type Desc struct {
     tOffset uint32          // Thumbnail JPEG SOI offset, if jpeg thumbnail
     tLen    uint32          // Thumbnail after JPEG EOD, if jpeg thumbnail
 
-            control         // what to do
+            control         // what to do when parsing
 
-    root    *ifdd           // storage for rewriting exif metadata
+    root    *ifdd           // tree of ifd for rewriting exif metadata
+    ifds    [MAKER+1]*ifdd  // flat access to ifd by id
 }
 
 type control struct {
             Control         // to keep Desc fully opaque
 }
-
-func (d *Desc) readTIFFData( offset uint32, dest interface{} ) {
-    b := bytes.NewBuffer( d.data[offset:] )
-    binary.Read( b, d.endian, dest )
-    return
-}
-
-// (d *Desc)get<tType>s(offset, count) functions read the requested count of
-// typed data from an offset anywhere in the data slice, using the endianess
-// and data slice from d. The result is a slice of the corresponding go type.
-
-func (d *Desc) getASCIIString( offset, count uint32 ) string {
-    // make sure terminating 0 (in count) is also included in the go string
-    return string( d.data[offset:offset+count] )
-}
-
-func (d *Desc) getByte( offset uint32 ) uint8 {
-    return d.data[offset]
-}
-
-func (d *Desc) getUnsignedBytes( offset, count uint32 ) []uint8 {
-    return d.data[offset:offset+count]
-}
-
-func (d *Desc) getUnsignedShort( offset uint32 ) (us uint16) {
-    b := bytes.NewBuffer( d.data[offset:offset+_ShortSize] )
-    binary.Read( b, d.endian, &us )
-    return
-}
-
-func (d *Desc) getUnsignedShorts( offset, count uint32 ) []uint16 {
-    r := make( []uint16, count )
-    d.readTIFFData( offset, &r )
-    return r
-}
-
-func (d *Desc) getUnsignedLong( offset uint32 ) (ul uint32) {
-    b := bytes.NewBuffer( d.data[offset:offset+_LongSize] )
-    binary.Read( b, d.endian, &ul )
-    return
-}
-
-func (d *Desc) getUnsignedLongs( offset, count uint32 ) []uint32 {
-    r := make( []uint32, count )
-    d.readTIFFData( offset, &r )
-    return r
-}
-
-func (d *Desc) getSignedLong( offset uint32 ) (l int32) {
-    b := bytes.NewBuffer( d.data[offset:offset+_LongSize] )
-    binary.Read( b, d.endian, &l )
-    return
-}
-
-func (d *Desc) getSignedLongs( offset, count uint32 ) []int32 {
-    r := make( []int32, count )
-    d.readTIFFData( offset, &r )
-    return r
-}
-
-func (d *Desc) getUnsignedRational( offset uint32 ) unsignedRational {
-    var r unsignedRational
-    d.readTIFFData( offset, &r )
-    return r
-}
-
-func (d *Desc) getUnsignedRationals( offset, count uint32 ) []unsignedRational {
-    r := make( []unsignedRational, count )
-    d.readTIFFData( offset, &r )
-    return r
-}
-
-func (d *Desc) getSignedRational( offset uint32 ) signedRational {
-    var r signedRational
-    d.readTIFFData( offset, &r )
-    return r
-}
-func (d *Desc) getSignedRationals( offset, count uint32 ) []signedRational {
-    r := make( []signedRational, count )
-    d.readTIFFData( offset, &r )
-    return r
-}
-
-type ifdId  uint
-const (
-    _PRIMARY ifdId  = 0     // namespace for IFD0, first (TIFF) IFD
-    _THUMBNAIL      = 1     // namespace for IFD1 (Thumbnail) pointed to by IFD0
-
-    _EXIF           = 2     // EXIF namespace, embedded in IFD0
-    _GPS            = 3     // GPS namespace, emvedded in IFD0 
-
-    _IOP            = 4     // Interoperability namespace, embedded in EXIF IFD
-
-    _MAKER          = 5     // one (non-standard) IFD for each maker note,
-                            // embedded in EXIF IFD
-)
 
 type tTag    uint16             // TIFF tag
 type tType   uint16             // TIIF type
@@ -235,62 +165,75 @@ func getTiffTString( t tType ) string {
     return "Undefined"
 }
 
-// common IFD entry structure (offset/value are specific to each value)
-type tEntry struct {
-    vTag    tTag
-    vType   tType
-    vCount  uint32
+func (d *Desc) readTIFFData( offset uint32, dest interface{} ) {
+    b := bytes.NewBuffer( d.data[offset:] )
+    binary.Read( b, d.endian, dest )
+    return
 }
 
-/*
-    In order to allow mofdifying/removing TIFF metadata, each IFD entry is
-    stored individually as a tiffvalue.
+// (d *Desc)get<tType>s(offset, count) functions read the requested count of
+// typed data from an offset anywhere in the data slice, using the endianess
+// and data slice from d. The result is a slice of the corresponding go type.
 
-    TIFF types are converted in go types:
-    _UnsignedByte       => []uint8
-    _ASCIIString        => string
-    _UnsignedShort      => []uint16
-    _UnsignedLong       => []uint32
-    _UnsignedRational   => []unsignedRational struct
-    _SignedByte         => []int8
-    _Undefined          => nil
-    _SignedShort        => []int16
-    _SignedLong         => []int32
-    _SignedRational     => []signedRational struct
-    _Float              => []float32
-    _Double             => []float64
-
-    Two other types are added:
-    _embeddedIFD        => ifd structure
-    _makerNote          => nkn structure
-*/
-
-type unsignedRational struct {
-    Numerator, Denominator  uint32  // unexported type, but exported fields ;-)
-}
-type signedRational struct {
-    Numerator, Denominator  int32
+func (d *Desc) getByte( offset uint32 ) uint8 {
+    return d.data[offset]
 }
 
-// A TIFF value is defined as its entry definition followed by one of the
-// above go types and implementing the following interface:
+func (d *Desc) getUnsignedBytes( offset, count uint32 ) []uint8 {
+    return d.data[offset:offset+count]
+}
 
-type serializer interface {
-// serialize the IFD entry of a value, return an error in case of failure
-// By side effect, the parent ifd dOffset is updated for next calls with
-// the size to be written later in the IFD data area or 0 if it fits in
-// in the entry (less than or equal to _valOffSize)
-    serializeEntry( w io.Writer) error
+func (d *Desc) getUnsignedShort( offset uint32 ) (us uint16) {
+    b := bytes.NewBuffer( d.data[offset:offset+_ShortSize] )
+    binary.Read( b, d.endian, &us )
+    return
+}
 
-// serialize the IFD data of a value, return an error in case of failure
-// By side effect the parent ifd dOffset is updated for next calls with the
-// size written in the IFD data area or 0 if it fits in _valOffSize
-    serializeData( w io.Writer ) error
+func (d *Desc) getUnsignedShorts( offset, count uint32 ) []uint16 {
+    r := make( []uint16, count )
+    d.readTIFFData( offset, &r )
+    return r
+}
+
+func (d *Desc) getUnsignedLong( offset uint32 ) (ul uint32) {
+    b := bytes.NewBuffer( d.data[offset:offset+_LongSize] )
+    binary.Read( b, d.endian, &ul )
+    return
+}
+
+func (d *Desc) getUnsignedLongs( offset, count uint32 ) []uint32 {
+    r := make( []uint32, count )
+    d.readTIFFData( offset, &r )
+    return r
+}
+
+func (d *Desc) getSignedLong( offset uint32 ) (l int32) {
+    b := bytes.NewBuffer( d.data[offset:offset+_LongSize] )
+    binary.Read( b, d.endian, &l )
+    return
+}
+
+func (d *Desc) getSignedLongs( offset, count uint32 ) []int32 {
+    r := make( []int32, count )
+    d.readTIFFData( offset, &r )
+    return r
+}
+
+func (d *Desc) getUnsignedRationals( offset, count uint32 ) []unsignedRational {
+    r := make( []unsignedRational, count )
+    d.readTIFFData( offset, &r )
+    return r
+}
+
+func (d *Desc) getSignedRationals( offset, count uint32 ) []signedRational {
+    r := make( []signedRational, count )
+    d.readTIFFData( offset, &r )
+    return r
 }
 
 // IFD generic support (conforming to TIFF, EXIF etc.)
 type ifdd struct {
-    id      ifdId           // namespace for each IFD
+    id      IfdId           // namespace for each IFD
     desc    *Desc           // parent document descriptor
     values  []serializer    // stored IFD content
 
@@ -304,49 +247,6 @@ type ifdd struct {
     fType   tType           // field type
     fCount  uint32          // field count
     sOffset uint32          // field value/offset offset in desc.data
-}
-
-// ignore the actual entry tType and reads bytes instead
-func (ifd *ifdd) getUnsignedBytes( ) []uint8 {
-    if ifd.fCount <= 4 {
-        return ifd.desc.getUnsignedBytes( ifd.sOffset, ifd.fCount )
-    }
-    rOffset := ifd.desc.getUnsignedLong( ifd.sOffset )
-    return ifd.desc.getUnsignedBytes( rOffset, ifd.fCount )
-}
-
-func (ifd *ifdd) getAsciiString( ) string {
-    var text string
-    if ifd.fCount <= 4 {
-        text = ifd.desc.getASCIIString( ifd.sOffset, ifd.fCount )
-    } else {
-        offset := ifd.desc.getUnsignedLong( ifd.sOffset )
-        text = ifd.desc.getASCIIString( offset, ifd.fCount )
-    }
-    return text
-}
-
-// ignore the actual entry type and read shorts instead
-func (ifd *ifdd) getUnsignedShorts( ) []uint16 {
-    if ifd.fCount * _ShortSize <= 4 {
-        return ifd.desc.getUnsignedShorts( ifd.sOffset, ifd.fCount )
-    } else {
-        rOffset := ifd.desc.getUnsignedLong( ifd.sOffset )
-        return ifd.desc.getUnsignedShorts( rOffset, ifd.fCount )
-    }
-}
-
-
-// storage does not presume any ifd data layout. This is done only at serializing
-func (ifd *ifdd) storeValue( value serializer ) {
-    i := len(ifd.values)
-    if i >= cap(ifd.values) {
-        panic( "storeValue called with no more current IFD entries\n" )
-    }
-
-    ifd.values = ifd.values[:i+1]         // extend slice within capacity
-    fmt.Printf("storeValue: cap=%d len=%d i=%d\n", cap(ifd.values), len(ifd.values), i )
-    ifd.values[i] = value
 }
 
 /*
@@ -424,237 +324,211 @@ func (ifd *ifdd) storeValue( value serializer ) {
       next IFD = 0
 */
 
-// Common value structure to embed in specific value definition
-type tVal struct {
-    ifd     *ifdd       // parent IFD
-            tEntry      // common entry structure
-}
-
-// TIFF Value definitions
-
-type ifdValue struct {
-        tVal
-    v   *ifdd           // embedded IFD
-}
-func (ifd *ifdd) newIfdValue( ifdVal *ifdd ) (iv *ifdValue) {
-    iv = new( ifdValue )
-    iv.ifd = ifd
-    iv.vTag = ifd.fTag
-    iv.vType = ifd.fType
-    iv.vCount = 1
-    iv.v = ifdVal
-    return
-}
-func (iv *ifdValue) serializeEntry( w io.Writer ) (err error) {
-    if err = binary.Write( w, iv.ifd.desc.endian, iv.tVal.tEntry ); err != nil {
-        return
-    }
-
-    sz := iv.v.dSize
-    if sz == 0 {
-        fmt.Printf( "ifd %d Getting embedded IFD ID=%d size @offset %#08x\n",
-                    iv.ifd.id, iv.v.id, iv.ifd.dOffset )
-        _, err = iv.v.serializeEntries( io.Discard, 0 )
-        if err != nil {
-            fmt.Printf( "ifd %d Getting embedded IFD ID=%d size failed: %v\n",
-                        iv.ifd.id, iv.v.id, err )
-            return
+func dumpData( header string, indent string, data []byte ) {
+    fmt.Printf( "%s:\n", header )
+    for i := 0; i < len(data); i += 16 {
+        fmt.Printf("%s%#04x: ", indent, i );
+        l := 16
+        if len(data)-i < 16 {
+            l = len(data)-i
         }
-        sz = iv.v.dOffset   // since we serialzed from offset 0
-        iv.v.dSize = sz     // save in case serializeEntry is called again
+        var b strings.Builder
+        j := 0
+        for ; j < l; j++ {
+            if data[i+j] < 0x20 || data[i+j] > 0x7f {
+                b.WriteByte( '.' )
+            } else {
+                b.WriteByte( data[i+j] )
+            }
+            fmt.Printf( "%02x ", data[i+j] )
+        }
+        for ; j < 16; j++ {
+            fmt.Printf( "   " )
+        }
+        fmt.Printf( "%s\n", b.String() )
     }
+}
 
-    fmt.Printf( "ifd %d embedded IFD ID=%d size=%d\n", iv.ifd.id, iv.v.id, sz )
-    err = binary.Write( w, iv.ifd.desc.endian, iv.ifd.dOffset )
-    iv.ifd.dOffset += sz
+func getEndianess( data []byte ) ( endian binary.ByteOrder, err error) {
+    endian = binary.BigEndian
+    err = nil
+
+    if bytes.Equal( data[:2], []byte( "II" ) ) {
+        endian = binary.LittleEndian
+    } else if ! bytes.Equal( data[:2], []byte( "MM" ) ) {
+        err = fmt.Errorf(
+                "exif: invalid TIFF header (unknown byte ordering: %v)\n",
+                data[:2] )
+    }
     return
 }
-func (iv *ifdValue)serializeData( w io.Writer ) (err error) {
-    fmt.Printf( "ifd %d Serialize embedded whole IFD %d @offset %#08x\n",
-        iv.ifd.id, iv.v.id, iv.ifd.dOffset )
-    var eSz, dSz uint32
-    eSz, err = iv.v.serializeEntries( w, iv.ifd.dOffset )
+
+// Parse data for exif metadata and build up an exif descriptor.
+//
+// It takes a byte slice as input (data), a starting offset in that slice
+// (start) and the following number of bytes (dLen) that contains the exif
+// metadata: an EXIF header is expected at the starting offset and the whole
+// metadata must fit in the following number of bytes. If the metadata size
+// is unknown, dLen can be given as 0, in which case parsing will use the rest
+// of the input slice.
+//
+// It returns the descriptor in case of success or an error in case of failure.
+func Parse( data []byte, start, dLen int, ec *Control ) (*Desc, error) {
+    if ! bytes.Equal( data[start:start+6], []byte( "Exif\x00\x00" ) ) {
+        return nil, fmt.Errorf( "exif: invalid signature (%s)\n",
+                                string(data[0:6]) )
+    }
+/*
+    // temporary, save exif data into file - exif-src.txt
+    {
+	    f, err := os.OpenFile( "exif-src.bin", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.ModePerm)
+        if err != nil { return nil, err }
+        _, err = f.Write( data[start:start+dLen] )
+        if err != nil { return nil, err }
+        if err = f.Close( ); err != nil { return nil, err }
+        if err != nil { return nil, err }
+    }
+    // end of temporary stuff
+*/
+    d := new( Desc )   // Exif\0\0 is followed immediately by TIFF header
+    d.data = data[start+_originOffset:start+dLen-_originOffset] // starts @TIFF header
+    d.Control = *ec
+
+    if d.Print {
+        fmt.Printf( "APP1 (EXIF)\n" )
+    }
+
+    // TIFF header starts with 2 bytes indicating the byte ordering ("II" short
+    // for Intel or "MM" short for Motorola, indicating little or big endian
+    // respectively)
+    var err error
+    d.endian, err = getEndianess( d.data )
+    if err != nil {
+        return nil, err
+    }
+    // followed by 2-byte 0x002a (according to the endianess)
+    validTiff := d.getUnsignedShort( 2 )
+    if validTiff != 0x2a {
+        return nil, fmt.Errorf(
+                    "exif: invalid TIFF header (invalid identifier: %#02x)\n",
+                    validTiff )
+    }
+
+    // followed by Primary Image File directory (IFD) offset
+    offset := d.getUnsignedLong( 4 )
+//    fmt.Printf( "  Primary Image metadata @%#04x\n", offset )
+    offset, d.root, err = d.checkIFD( PRIMARY, offset, checkTiffTag )
+    if err != nil {
+        return nil, err
+    }
+
+    if offset != 0 {
+//        fmt.Printf( "  Thumbnail Image metadata @%#04x\n", offset )
+        _, d.root.next, err = d.checkIFD( THUMBNAIL, offset, checkTiffTag )
+        if err != nil {
+            return nil, err
+        }
+    }
+    return d, nil
+}
+
+var masks [256]byte
+
+func init() {
+    for i:= 0; i < 256; i++ { masks[i] = 0xff }
+    masks['E'] = 0xfe   // position at bit 0 in pattern
+    masks['x'] = 0xfd   // position at bit 1 ...
+    masks['i'] = 0xfb
+    masks['f'] = 0xf7
+    masks[ 0 ] = 0xcf   // 2 positions for \x0 (bits 4 and 5)
+}
+
+// Search looks up for the EXIF header in memory. It takes a source data slice
+// and a start offset in that slice. If the EXIF header is found it returns the
+// slice starting at the EXIF header, till the end of the original data slice.
+// Otherwise it returns an error. 
+//
+// It implements the bitap (or shift-Or) algorithm to quickly find the exif
+// header. Exif header is 6-byte long ("Exif\x0\x0") and requires only a 6-bit
+// position mask. It uses a 256-byte mask array, which is is likely to stay in
+// cache, and a bitmask that fits in a register. The time complexity is O(n).
+func Search( data []byte, start int ) ([]byte, error) {
+
+    bitMask := byte(0xfe)
+    for i:= start; i < len(data); i++ {
+        bitMask |= masks[data[i]]
+        bitMask <<= 1
+        if 0 == bitMask & 64 {
+//            fmt.Printf("Found Exif header @%#08x (%v)\n", i-5, string(data[i-5:i-1]) )
+            return data[i-5:], nil
+        }
+    }
+    return data[0:0], fmt.Errorf("search: did not find Exif header in data\n")
+}
+
+// Read the file whose path name is given and parse the data.
+// It takes the path name (path), a starting offset in that file.
+// It searches for the EXIF header from that starting offset, which
+// can therefore be given as 0 if it is unknown.
+//
+// It returns an exif descriptor in case of success or an error in
+// case of failure.
+func Read( path string, start int, ec *Control ) (*Desc, error) {
+    data, err := ioutil.ReadFile( path )
+    if err != nil {
+        return nil, err
+    }
+    data, err = Search( data, start )
+    if err != nil {
+        return nil, err
+    }
+    return Parse( data, 0, len(data), ec )
+}
+
+// Write the parsed EXIF metadata into a file. It returns the number of bytes
+// written in the file in case of success or an error in case of failure.
+func (d *Desc)Write( path string ) (n int, err error) {
+    var f *os.File
+    f, err = os.OpenFile( path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.ModePerm)
+    if err != nil {
+        return 0, err
+    }
+    n, err = d.serialize( f )
     if err != nil {
         return
     }
-    dSz, err = iv.v.serializeDataArea( w, iv.ifd.dOffset )
-    if err == nil {
-        iv.ifd.dOffset += eSz + dSz
+    fmt.Printf( "wrote %d bytes to %s\n", n, path )
+    f.Close( )
+    return
+}
+
+// GetThumnail returns information about a possible thumbnail.
+// It returns the thumbnail starting offset in the original data slice,
+// the size of the thumbnail data and the thumbnail compression type.
+// If no thumbnail was found in the metadata, the starting offset and
+// size are 0 and the comprssion type is exif.Undefined Compression.
+func (d *Desc)GetThumbnail() (uint32, uint32, Compression) {
+    offset := d.tOffset
+    if offset != 0 {
+        offset += _originOffset
     }
-    return
+    return offset, d.tLen, d.tType
 }
 
-type unsignedByteValue struct {
-        tVal
-    v   []uint8
-}
-func (ifd *ifdd) newUnsignedByteValue( ubVal []uint8 ) (ub *unsignedByteValue) {
-    ub = new( unsignedByteValue )
-    ub.ifd = ifd
-    ub.vTag = ifd.fTag
-    ub.vType = ifd.fType
-    ub.vCount = uint32(len(ubVal))
-    ub.v = ubVal
-    return
-}
-func (ub *unsignedByteValue)serializeEntry( w io.Writer ) error {
-    return ub.ifd.serializeSliceEntry( w, ub.tEntry, ub.v )
-}
-func (ub *unsignedByteValue)serializeData( w io.Writer ) error {
-    return ub.ifd.serializeSliceData( w, ub.v )
-}
-
-// treat asciiStringgValue as unsignedByteValue 
-func (ifd *ifdd) newAsciiStringValue( asVal string ) (as *unsignedByteValue) {
-    as = new( unsignedByteValue )
-    as.ifd = ifd
-    as.vTag = ifd.fTag
-    as.vType = ifd.fType
-    as.vCount = uint32(len(asVal))
-    as.v = []byte( asVal )
-    return
-}
-
-type signedByteValue  struct {
-        tVal
-    v   []int8
-}
-
-func (ifd *ifdd) newSignedByteValue( sbVal []int8 ) (sb *signedByteValue) {
-    sb = new( signedByteValue )
-    sb.ifd = ifd
-    sb.vTag = ifd.fTag
-    sb.vType = ifd.fType
-    sb.vCount = uint32(len(sbVal))
-    sb.v = sbVal
-    return
-}
-func (sb *signedByteValue)serializeEntry( w io.Writer ) error {
-    return sb.ifd.serializeSliceEntry( w, sb.tEntry, sb.v )
-}
-func (sb *signedByteValue)serializeData( w io.Writer ) error {
-    return sb.ifd.serializeSliceData( w, sb.v )
-}
-
-type unsignedShortValue struct {
-        tVal
-    v   []uint16
-}
-func (ifd *ifdd) newUnsignedShortValue( usVal []uint16 ) (us *unsignedShortValue) {
-    us = new( unsignedShortValue )
-    us.ifd = ifd
-    us.vTag = ifd.fTag
-    us.vType = ifd.fType
-    us.vCount = uint32(len(usVal))
-    us.v = usVal
-    return
-}
-func (us *unsignedShortValue)serializeEntry( w io.Writer ) error {
-    return us.ifd.serializeSliceEntry( w, us.tEntry, us.v)
-}
-func (us *unsignedShortValue)serializeData( w io.Writer ) error {
-    return us.ifd.serializeSliceData( w, us.v )
-}
-
-type signedShortValue struct {
-        tVal
-    v   []int16
-}
-func (ifd *ifdd) newSignedShortValue( ssVal []int16 ) (ss *signedShortValue) {
-    ss = new( signedShortValue )
-    ss.ifd = ifd
-    ss.vTag = ifd.fTag
-    ss.vType = ifd.fType
-    ss.vCount = uint32(len(ssVal))
-    ss.v = ssVal
-    return
-}
-func (ss *signedShortValue)serializeEntry( w io.Writer ) error {
-    return ss.ifd.serializeSliceEntry( w, ss.tEntry, ss.v )
-}
-func (ss *signedShortValue)serializeData( w io.Writer ) error {
-    return ss.ifd.serializeSliceData( w, ss.v )
-}
-
-type unsignedLongValue struct {
-        tVal
-    v   []uint32
-}
-func (ifd *ifdd) newUnsignedLongValue( ulVal []uint32 ) (ul *unsignedLongValue) {
-    ul = new( unsignedLongValue )
-    ul.ifd = ifd
-    ul.vTag = ifd.fTag
-    ul.vType = ifd.fType
-    ul.vCount = uint32(len(ulVal))
-    ul.v = ulVal
-    return
-}
-func (ul *unsignedLongValue)serializeEntry( w io.Writer ) error {
-    return ul.ifd.serializeSliceEntry( w, ul.tEntry, ul.v )
-}
-func (ul *unsignedLongValue)serializeData( w io.Writer ) error {
-    return ul.ifd.serializeSliceData( w, ul.v )
-}
-
-type signedLongValue struct {
-        tVal
-    v   []int32
-}
-func (ifd *ifdd) newSignedLongValue( slVal []int32 ) (sl *signedLongValue) {
-    sl = new( signedLongValue )
-    sl.ifd = ifd
-    sl.vTag = ifd.fTag
-    sl.vType = ifd.fType
-    sl.vCount = uint32(len(slVal))
-    sl.v = slVal
-    return
-}
-func (sl *signedLongValue)serializeEntry( w io.Writer ) error {
-    return sl.ifd.serializeSliceEntry( w, sl.tEntry, sl.v )
-}
-func (sl *signedLongValue)serializeData( w io.Writer ) error {
-    return sl.ifd.serializeSliceData( w, sl.v )
-}
-
-type unsignedRationalValue struct {
-        tVal
-    v  []unsignedRational
-}
-func (ifd *ifdd) newUnsignedRationalValue(
-                    urVal []unsignedRational ) (ur *unsignedRationalValue) {
-    ur = new( unsignedRationalValue )
-    ur.ifd = ifd
-    ur.vTag = ifd.fTag
-    ur.vType = ifd.fType
-    ur.vCount = uint32(len(urVal))
-    ur.v = urVal
-    return
-}
-func (ur *unsignedRationalValue)serializeEntry( w io.Writer ) error {
-    return ur.ifd.serializeSliceEntry( w, ur.tEntry, ur.v )
-}
-func (ur *unsignedRationalValue)serializeData( w io.Writer ) error {
-    return ur.ifd.serializeSliceData( w, ur.v )
-}
-
-type signedRationalValue struct {
-        tVal
-    v   []signedRational
-}
-func (ifd *ifdd) newSignedRationalValue(
-                        srVal []signedRational ) (sr *signedRationalValue) {
-    sr = new( signedRationalValue )
-    sr.ifd = ifd
-    sr.vTag = ifd.fTag
-    sr.vType = ifd.fType
-    sr.vCount = uint32(len(srVal))
-    sr.v = srVal
-    return
-}
-func (sr *signedRationalValue)serializeEntry( w io.Writer ) error {
-    return sr.ifd.serializeSliceEntry( w, sr.tEntry, sr.v )
-}
-func (sr *signedRationalValue)serializeData( w io.Writer ) error {
-    return sr.ifd.serializeSliceData( w, sr.v )
+func (d *Desc)Format( ifdIds []IfdId ) error {
+    fmt.Printf( "Picture Metadata:\n" )
+    for i := 0; i < len(ifdIds); i++ {
+        id := ifdIds[i]
+        if id >= PRIMARY && id <= MAKER {
+            ifd := d.ifds[id]
+            if ifd != nil {
+                fmt.Printf( "--- IFD %s (id %d)\n", ifdNames[id], id )
+                ifd.format( os.Stdout )
+            } else {
+                fmt.Printf( "--- IFD %s (id %d) is absent\n", ifdNames[id], id )
+            }
+        }
+    }
+    return nil
 }
 
