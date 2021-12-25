@@ -15,37 +15,46 @@ type tEntry struct {
 }
 
 /*
-    In order to allow mofdifying/removing TIFF metadata, each IFD entry is
+    In order to allow modifying/removing TIFF metadata, each IFD entry is
     stored individually as a tiffvalue.
 
-    TIFF types are converted in go types:
+    In input TIFF data types are converted in go types:
     _UnsignedByte       => []uint8
-    _ASCIIString        => string
+    _ASCIIString        => []uint8
     _UnsignedShort      => []uint16
     _UnsignedLong       => []uint32
     _UnsignedRational   => []unsignedRational struct
     _SignedByte         => []int8
-    _Undefined          => nil
+    _Undefined          => transformed in actual type, from the tag value
     _SignedShort        => []int16
     _SignedLong         => []int32
     _SignedRational     => []signedRational struct
     _Float              => []float32
     _Double             => []float64
 
-    Two other types are added:
-    _embeddedIFD        => ifd structure
-    _makerNote          => nkn structure
+    Then those go types are saved as tiffValue:
+    []uint8         -> unsignedByteValue for _UnsignedByte(s) and _ASCIIString
+                    -> descValue for same Maker notes requiring their own reference
+                    -> ifdValue for embedded ifd or some maker notes
+    []uint16        -> unsignedShortValue for _UnsignedShort(s)
+    []uint32        -> unsignedLongValue for _UnsignedLong(s)
+    []unsignedRational -> unsignedRationalValue for _UnsignedRational(s)
+    []int8          -> signedByteValue for _SignedByte(s)
+    []int16         -> signedShortValue for _SignedShort(s)
+    []int32         -> signedLongValue for _SignedLong(s)
+    []signedRational -> signedRationalValue for _SignedRational(s)
 */
 
 type unsignedRational struct {
     Numerator, Denominator  uint32  // unexported type, but exported fields ;-)
 }
+
 type signedRational struct {
     Numerator, Denominator  int32
 }
 
-// A TIFF value is defined as its entry definition followed by one of the
-// above go types and implementing the following interface:
+// A tiffValue is defined as its entry definition followed by one of the
+// above types and implementing the following interface:
 
 type serializer interface {
 // serialize the IFD entry of a value, return an error in case of failure
@@ -59,6 +68,7 @@ type serializer interface {
 // size written in the IFD data area or 0 if it fits in _valOffSize
     serializeData( w io.Writer ) error
 
+// implement tag specific formated print of the value
     format( w io.Writer )
 }
 
@@ -73,12 +83,29 @@ func (ifd *ifdd) getUnsignedBytes( ) []uint8 {
     return ifd.desc.getUnsignedBytes( rOffset, ifd.fCount )
 }
 
+func (ifd *ifdd) getSignedBytes( ) []int8 {
+    if ifd.fCount <= 4 {
+        return ifd.desc.getSignedBytes( ifd.sOffset, ifd.fCount )
+    }
+    rOffset := ifd.desc.getUnsignedLong( ifd.sOffset )
+    return ifd.desc.getSignedBytes( rOffset, ifd.fCount )
+}
+
 func (ifd *ifdd) getUnsignedShorts( ) []uint16 {
     if ifd.fCount * _ShortSize <= 4 {
         return ifd.desc.getUnsignedShorts( ifd.sOffset, ifd.fCount )
     } else {
         rOffset := ifd.desc.getUnsignedLong( ifd.sOffset )
         return ifd.desc.getUnsignedShorts( rOffset, ifd.fCount )
+    }
+}
+
+func (ifd *ifdd) getSignedShorts( ) []int16 {
+    if ifd.fCount * _ShortSize <= 4 {
+        return ifd.desc.getSignedShorts( ifd.sOffset, ifd.fCount )
+    } else {
+        rOffset := ifd.desc.getUnsignedLong( ifd.sOffset )
+        return ifd.desc.getSignedShorts( rOffset, ifd.fCount )
     }
 }
 
@@ -94,6 +121,30 @@ func (ifd *ifdd) getUnsignedLongs( ) []uint32 {
 // All ifd.check<type> functions check the entry type (and sometimes count)
 // and return an error if it does not match expectations, otherwise return
 // the corresponding value
+
+func (ifd *ifdd) checkUnsignedBytes( count uint32 ) ([]uint8, error) {
+    if ifd.fType != _UnsignedByte {
+        return nil, fmt.Errorf( "checkUnsignedBytes: incorrect type (%s)\n",
+                                getTiffTString( ifd.fType ) )
+    }
+    if count != 0 && count != ifd.fCount {
+        return nil, fmt.Errorf( "checkUnsignedBytes: incorrect count (%d)\n",
+                                ifd.fCount )
+    }
+    return ifd.getUnsignedBytes( ), nil
+}
+
+func (ifd *ifdd) checkSignedBytes( count uint32 ) ([]int8, error) {
+    if ifd.fType != _SignedByte {
+        return nil, fmt.Errorf( "checkSignedBytes: incorrect type (%s)\n",
+                                getTiffTString( ifd.fType ) )
+    }
+    if count != 0 && count != ifd.fCount {
+        return nil, fmt.Errorf( "checkSignedBytes: incorrect count (%d)\n",
+                                ifd.fCount )
+    }
+    return ifd.getSignedBytes( ), nil
+}
 
 func (ifd *ifdd) checkTiffAsciiString( ) ([]byte, error) {
     if ifd.fType != _ASCIIString {
@@ -113,6 +164,18 @@ func (ifd *ifdd) checkUnsignedShorts( count uint32 ) ([]uint16, error) {
                                 ifd.fCount )
     }
     return ifd.getUnsignedShorts( ), nil
+}
+
+func (ifd *ifdd) checkSignedShorts( count uint32 ) ([]int16, error) {
+    if ifd.fType != _SignedShort {
+        return nil, fmt.Errorf( "checkSignedShorts: incorrect type (%s)\n",
+                                getTiffTString( ifd.fType ) )
+    }
+    if count != 0 && count != ifd.fCount {
+        return nil, fmt.Errorf( "checkSignedShorts: incorrect count (%d)\n",
+                                ifd.fCount )
+    }
+    return ifd.getSignedShorts( ), nil
 }
 
 func (ifd *ifdd) checkUnsignedLongs( count uint32 ) ([]uint32, error) {
@@ -178,6 +241,64 @@ type tVal struct {
 }
 
 // TIFF Value definitions
+
+type descValue struct {     // used for some maker notes
+            tVal
+    header  string
+    v      *Desc
+}
+func (ifd *ifdd) newDescValue( dVal *Desc, header string ) (av *descValue) {
+    dv := new( descValue )
+    dv.ifd = ifd
+    dv.vTag = ifd.fTag
+    dv.vType = ifd.fType
+//  dv.vCount will be calculated when serializeEntry is called
+    dv.header = header
+    dv.v = dVal
+    return
+}
+
+func (dv *descValue) serializeEntry( w io.Writer ) (err error) {
+
+    sz := dv.v.root.dSize
+    if sz == 0 {
+        _, err = dv.v.root.serializeEntries( io.Discard, uint32(len(dv.header)) )
+        if err != nil {
+            return
+        }
+        sz = dv.v.root.dOffset
+        dv.v.root.dSize = sz
+    }
+
+    dv.vCount = sz
+    if err = binary.Write( w, dv.ifd.desc.endian, dv.tVal.tEntry ); err == nil {
+        err = binary.Write( w, dv.ifd.desc.endian, dv.ifd.dOffset )
+        dv.ifd.dOffset += sz
+    }
+    return
+}
+
+func (dv *descValue)serializeData( w io.Writer ) (err error) {
+
+    _, err = w.Write( []byte( dv.header ) )
+    if err != nil {
+        return
+    }
+    _, err = dv.v.root.serializeEntries( w, uint32(len(dv.header)) )
+    if err != nil {
+        return
+    }
+    _, err = dv.v.root.serializeDataArea( w, uint32(len(dv.header)) )
+    if err != nil {
+        return
+    }
+    dv.ifd.dOffset += dv.v.root.dSize
+    return
+}
+
+func (dv *descValue)format( w io.Writer ) {
+    return  // Do nothing. Maker note will be separately formatted.
+}
 
 type ifdValue struct {
         tVal
@@ -582,8 +703,40 @@ func (ifd *ifdd) storeValue( value serializer ) {
 // name is the entry name that is displayed with the value. The argument
 // print is the function that formats the value for display.
 
-func (ifd *ifdd) storeUndefinedAsBytes( name string, count uint32,
-                                       print func(v interface{}) ) error {
+func (ifd *ifdd) storeEmbeddedIfd( name string, id IfdId,
+                                   storeTags func( ifd *ifdd) error ) error {
+    offset, err := ifd.checkUnsignedLongs( 1 )
+    if err == nil {
+        // recusively process the embedded IFD here
+        var eIfd *ifdd
+        _, eIfd, err = ifd.desc.storeIFD( id, offset[0], storeTags )
+        if err == nil {
+            ifd.storeValue( ifd.newIfdValue( eIfd ) )
+        }
+    }
+    return err
+}
+
+func (ifd *ifdd) storeUnsignedBytes( name string, count uint32,
+                                     p func(v interface{}) ) error {
+    values, err := ifd.checkUnsignedBytes( count )
+    if err == nil {
+        ifd.storeValue( ifd.newUnsignedByteValue( name, p, values ) )
+    }
+    return err
+}
+
+func (ifd *ifdd) storeSignedBytes( name string, count uint32,
+                                     p func(v interface{}) ) error {
+    values, err := ifd.checkSignedBytes( count )
+    if err == nil {
+        ifd.storeValue( ifd.newSignedByteValue( name, p, values ) )
+    }
+    return err
+}
+
+func (ifd *ifdd) storeUndefinedAsUnsignedBytes( name string, count uint32,
+                                                p func(v interface{}) ) error {
     if ifd.fType != _Undefined {
         return fmt.Errorf( "%s: incorrect type (%s)\n",
                            name, getTiffTString( ifd.fType ) )
@@ -591,8 +744,20 @@ func (ifd *ifdd) storeUndefinedAsBytes( name string, count uint32,
     if count != 0 && count != ifd.fCount {
         return fmt.Errorf( "%s: incorrect count (%d)\n", name, ifd.fCount )
     }
-    ifd.storeValue( ifd.newUnsignedByteValue( name, print,
-                                ifd.getUnsignedBytes( ) ) )
+    ifd.storeValue( ifd.newUnsignedByteValue( name, p, ifd.getUnsignedBytes( ) ) )
+    return nil
+}
+
+func (ifd *ifdd) storeUndefinedAsSignedBytes( name string, count uint32,
+                                              p func(v interface{}) ) error {
+    if ifd.fType != _Undefined {
+        return fmt.Errorf( "%s: incorrect type (%s)\n",
+                           name, getTiffTString( ifd.fType ) )
+    }
+    if count != 0 && count != ifd.fCount {
+        return fmt.Errorf( "%s: incorrect count (%d)\n", name, ifd.fCount )
+    }
+    ifd.storeValue( ifd.newSignedByteValue( name, p, ifd.getSignedBytes( ) ) )
     return nil
 }
 
@@ -612,6 +777,29 @@ func (ifd *ifdd) storeUnsignedShorts( name string, count uint32,
         ifd.storeValue( ifd.newUnsignedShortValue( name, p, values ) )
     }
     return err
+}
+
+func (ifd *ifdd) storeSignedShorts( name string, count uint32,
+                                    p func(v interface{}) ) error {
+    values, err := ifd.checkSignedShorts( count )
+    if err == nil {
+        ifd.storeValue( ifd.newSignedShortValue( name, p, values ) )
+    }
+    return err
+}
+
+func (ifd *ifdd) storeUndefinedAsSignedShorts( name string, count uint32,
+                                          print func(v interface{}) ) error {
+    if ifd.fType != _Undefined {
+        return fmt.Errorf( "%s: incorrect type (%s)\n",
+                           name, getTiffTString( ifd.fType ) )
+    }
+    if count != 0 && count != ifd.fCount {
+        return fmt.Errorf( "%s: incorrect count (%d)\n", name, ifd.fCount )
+    }
+    ifd.storeValue( ifd.newSignedShortValue( name, print,
+                                ifd.getSignedShorts( ) ) )
+    return nil
 }
 
 func (ifd *ifdd) storeUnsignedLongs( name string, count uint32,
@@ -649,3 +837,24 @@ func (ifd *ifdd) storeSignedRationals( name string, count uint32,
     }
     return err
 }
+
+// Store as read from the ifd entry fType and fCount, as long as fType is not
+// _Undefined, which would not allow to know the data size.
+func (ifd *ifdd) storeAnyNonUndefined( name string,
+                                       p func(v interface{}) ) error {
+    switch ifd.fType {
+    case _UnsignedByte:     return ifd.storeUnsignedBytes( name, ifd.fCount, p )
+    case _ASCIIString:      return ifd.storeAsciiString( name )
+    case _UnsignedShort:    return ifd.storeUnsignedShorts( name, ifd.fCount, p )
+    case _UnsignedLong:     return ifd.storeUnsignedLongs( name, ifd.fCount, p )
+    case _UnsignedRational: return ifd.storeUnsignedRationals( name, ifd.fCount, p )
+    case _SignedByte:       return ifd.storeSignedBytes( name, ifd.fCount, p )
+    case _Undefined:        return fmt.Errorf( "storeAnyNonUndefined: undefined type\n")
+    case _SignedShort:      return ifd.storeSignedShorts( name, ifd.fCount, p )
+    case _SignedLong:       return ifd.storeSignedLongs( name, ifd.fCount, p )
+    case _SignedRational:   return ifd.storeSignedRationals( name, ifd.fCount, p )
+    }
+    return fmt.Errorf( "storeAnyNonUndefined: unsupported type %s\n",
+                       getTiffTString( ifd.fType ) )
+}
+

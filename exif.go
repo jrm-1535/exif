@@ -85,30 +85,37 @@ const (
     IOP                     // Interoperability namespace, embedded in EXIF IFD
 
     MAKER                   // non-standard IFD for each maker, embedded in EXIF IFD
+    EMBEDDED                // possible non-standard IFD embedded in MAKER
+
+    _IFD_N                  // last entry + 1 to size arrays
 )
 
 var ifdNames  = [...]string{ "Primary", "Thumbnail", "Exif",
-                             "GPS", "Interoperability", "Maker Note" }
+                             "GPS", "Interoperability",
+                             "Maker Note", "Maker Note Embedded" }
 
 type maker  struct {
     name    string
     try     func( *ifdd, uint32 ) (func( uint32 ) error)
 }
 
-var makerNotes = [...]maker{ { "Apple", tryAppleMakerNote } }
+var makerNotes = [...]maker{ { "Apple", tryAppleMakerNote },
+                             { "Nikon", tryNikonMakerNote } }
 
 type Desc struct {
     data    []byte          // starts at TIFF header (origin after exif header)
     endian  binary.ByteOrder // endianess as defined in binary
 
+    global  map[string]interface{}  // storage for global information
+/*
     tType   Compression     // Thumbnail information if any
     tOffset uint32          // Thumbnail JPEG SOI offset, if jpeg thumbnail
     tLen    uint32          // Thumbnail after JPEG EOD, if jpeg thumbnail
-
+*/
             control         // what to do when parsing
 
     root    *ifdd           // tree of ifd for rewriting exif metadata
-    ifds    [MAKER+1]*ifdd  // flat access to ifd by id
+    ifds    [_IFD_N]*ifdd   // flat access to ifd by id
 }
 
 type control struct {
@@ -131,10 +138,6 @@ const (                         // TIFF Types
     _SignedRational
     _Float
     _Double
-
-    // for special cases of _Undefined type actually being bytes or ASCII string
-    _UndefinedByte
-    _UndefinedString
 )
 
 const (                 // TIFF Type sizes (signed or unsigned)
@@ -149,7 +152,7 @@ const (                 // TIFF Type sizes (signed or unsigned)
 
 func getTiffTString( t tType ) string {
     switch t {
-        case _UnsignedByte: return "byte"
+        case _UnsignedByte: return "Unsigned byte"
         case _ASCIIString: return "ASCII string"
         case _UnsignedShort: return "Unsigned short"
         case _UnsignedLong: return "Unsigned long"
@@ -183,6 +186,12 @@ func (d *Desc) getUnsignedBytes( offset, count uint32 ) []uint8 {
     return d.data[offset:offset+count]
 }
 
+func (d *Desc) getSignedBytes( offset uint32, count uint32 ) []int8 {
+    r := make( []int8, count )
+    d.readTIFFData( offset, &r )
+    return r
+}
+
 func (d *Desc) getUnsignedShort( offset uint32 ) (us uint16) {
     b := bytes.NewBuffer( d.data[offset:offset+_ShortSize] )
     binary.Read( b, d.endian, &us )
@@ -191,6 +200,12 @@ func (d *Desc) getUnsignedShort( offset uint32 ) (us uint16) {
 
 func (d *Desc) getUnsignedShorts( offset, count uint32 ) []uint16 {
     r := make( []uint16, count )
+    d.readTIFFData( offset, &r )
+    return r
+}
+
+func (d *Desc) getSignedShorts( offset uint32, count uint32 ) []int16 {
+    r := make( []int16, count )
     d.readTIFFData( offset, &r )
     return r
 }
@@ -231,6 +246,17 @@ func (d *Desc) getSignedRationals( offset, count uint32 ) []signedRational {
     return r
 }
 
+func (d *Desc) checkValidTiff( ) (uint32, error) {
+    validTiff := d.getUnsignedShort( 2 )
+    if validTiff != 0x2a {
+        return 0, fmt.Errorf(
+            "checkValidTiff: invalid TIFF header (invalid identifier: %#02x)\n",
+             validTiff )
+    }
+    // followed by Primary Image File directory (IFD) offset
+    return d.getUnsignedLong( 4 ), nil
+}
+
 // IFD generic support (conforming to TIFF, EXIF etc.)
 type ifdd struct {
     id      IfdId           // namespace for each IFD
@@ -246,7 +272,7 @@ type ifdd struct {
     fTag    tTag            // field tag
     fType   tType           // field type
     fCount  uint32          // field count
-    sOffset uint32          // field value/offset offset in desc.data
+    sOffset uint32          // field value or offset in desc.data
 }
 
 /*
@@ -352,15 +378,25 @@ func dumpData( header string, indent string, data []byte ) {
 func getEndianess( data []byte ) ( endian binary.ByteOrder, err error) {
     endian = binary.BigEndian
     err = nil
-
+    // TIFF header starts with 2 bytes indicating the byte ordering ("II" short
+    // for Intel or "MM" short for Motorola, indicating little or big endian
+    // respectively)
     if bytes.Equal( data[:2], []byte( "II" ) ) {
         endian = binary.LittleEndian
     } else if ! bytes.Equal( data[:2], []byte( "MM" ) ) {
         err = fmt.Errorf(
-                "exif: invalid TIFF header (unknown byte ordering: %v)\n",
+                "getEndianess: invalid TIFF header (unknown byte ordering: %v)\n",
                 data[:2] )
     }
     return
+}
+
+func newDesc( data []byte, c *Control ) *Desc {
+    d := new( Desc )
+    d.data = data
+    d.Control = *c
+    d.global = make(map[string]interface{})
+    return d
 }
 
 // Parse data for exif metadata and build up an exif descriptor.
@@ -390,41 +426,31 @@ func Parse( data []byte, start, dLen int, ec *Control ) (*Desc, error) {
     }
     // end of temporary stuff
 */
-    d := new( Desc )   // Exif\0\0 is followed immediately by TIFF header
-    d.data = data[start+_originOffset:start+dLen-_originOffset] // starts @TIFF header
-    d.Control = *ec
-
+    // Exif\0\0 is followed immediately by TIFF header
+    d := newDesc( data[start+_originOffset:start+dLen-_originOffset], ec )
     if d.Print {
         fmt.Printf( "APP1 (EXIF)\n" )
     }
 
-    // TIFF header starts with 2 bytes indicating the byte ordering ("II" short
-    // for Intel or "MM" short for Motorola, indicating little or big endian
-    // respectively)
     var err error
     d.endian, err = getEndianess( d.data )
     if err != nil {
         return nil, err
     }
-    // followed by 2-byte 0x002a (according to the endianess)
-    validTiff := d.getUnsignedShort( 2 )
-    if validTiff != 0x2a {
-        return nil, fmt.Errorf(
-                    "exif: invalid TIFF header (invalid identifier: %#02x)\n",
-                    validTiff )
-    }
 
-    // followed by Primary Image File directory (IFD) offset
-    offset := d.getUnsignedLong( 4 )
+    offset, err := d.checkValidTiff( )
+    if err != nil {
+        return nil, err
+    }
 //    fmt.Printf( "  Primary Image metadata @%#04x\n", offset )
-    offset, d.root, err = d.checkIFD( PRIMARY, offset, checkTiffTag )
+    offset, d.root, err = d.storeIFD( PRIMARY, offset, storeTiffTags )
     if err != nil {
         return nil, err
     }
 
     if offset != 0 {
 //        fmt.Printf( "  Thumbnail Image metadata @%#04x\n", offset )
-        _, d.root.next, err = d.checkIFD( THUMBNAIL, offset, checkTiffTag )
+        _, d.root.next, err = d.storeIFD( THUMBNAIL, offset, storeTiffTags )
         if err != nil {
             return nil, err
         }
@@ -508,24 +534,27 @@ func (d *Desc)Write( path string ) (n int, err error) {
 // If no thumbnail was found in the metadata, the starting offset and
 // size are 0 and the comprssion type is exif.Undefined Compression.
 func (d *Desc)GetThumbnail() (uint32, uint32, Compression) {
-    offset := d.tOffset
-    if offset != 0 {
-        offset += _originOffset
+    tOffset, _ := d.global["thumbOffset"].(uint32)
+    tLen, _ := d.global["thumbLen"].(uint32)
+    tType, _ := d.global["thumbType"].(Compression)
+
+    if tOffset != 0 {
+        tOffset += _originOffset
     }
-    return offset, d.tLen, d.tType
+    return tOffset, tLen, tType
 }
 
 func (d *Desc)Format( ifdIds []IfdId ) error {
     fmt.Printf( "Picture Metadata:\n" )
     for i := 0; i < len(ifdIds); i++ {
         id := ifdIds[i]
-        if id >= PRIMARY && id <= MAKER {
+        if /*id >= PRIMARY &&(*/ id < _IFD_N {
             ifd := d.ifds[id]
             if ifd != nil {
-                fmt.Printf( "--- IFD %s (id %d)\n", ifdNames[id], id )
+                fmt.Printf( "--- %s IFD (id %d)\n", ifdNames[id], id )
                 ifd.format( os.Stdout )
             } else {
-                fmt.Printf( "--- IFD %s (id %d) is absent\n", ifdNames[id], id )
+                fmt.Printf( "--- %s IFD (id %d) is absent\n", ifdNames[id], id )
             }
         }
     }

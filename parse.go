@@ -134,7 +134,7 @@ When thumbnails use JPEG compression, this tag value is set to 6.
                 fmt.Printf("    Warning: Exif2-2 specifies that in case of JPEG picture compression be omited\n")
             }
         } else {    // _THUMBNAIL
-            ifd.desc.tType = cType    // remember thumnail compression type
+            ifd.desc.global["tumbType"] = cType  // remember thumnail compression type
         }
 
         fmtCompression := func( v interface{} ) {
@@ -221,8 +221,9 @@ func (ifd *ifdd) storeTiffYCbCrPositioning( ) error {
 
 func (ifd *ifdd) storeJPEGInterchangeFormat( ) error {
     offset, err := ifd.checkUnsignedLongs( 1 )
-    if err != nil {
-        ifd.desc.tOffset = offset[0]
+    if err == nil {
+        ifd.desc.global["thumbOffset"] = offset[0]
+//        fmt.Printf( "JPEGInterchangeFormat: offset %#08x\n", offset[0] )
         ifd.storeValue( ifd.newUnsignedLongValue( "", nil, offset ) )
     }
     return err
@@ -230,33 +231,21 @@ func (ifd *ifdd) storeJPEGInterchangeFormat( ) error {
 
 func (ifd *ifdd) storeJPEGInterchangeFormatLength( ) error {
     offset, err := ifd.checkUnsignedLongs( 1 )
-    if err != nil {
-        ifd.desc.tLen = offset[0]
+    if err == nil {
+        ifd.desc.global["thumbLen"] = offset[0]
         ifd.storeValue( ifd.newUnsignedLongValue( "", nil, offset ) )
     }
     return err
 }
 
-func (ifd *ifdd) storeEmbeddedIfd( name string, id IfdId,
-                                   checkTags func( ifd *ifdd) error ) error {
-    offset, err := ifd.checkUnsignedLongs( 1 )
-    if err == nil {
-        // recusively process the embedded IFD here
-        _, eIfd, err := ifd.desc.checkIFD( id, offset[0], checkTags )
-        if err == nil {
-            ifd.storeValue( ifd.newIfdValue( eIfd ) )
-            ifd.desc.ifds[id] = ifd // store in flat ifd array
-        }
-    }
-    return err
-}
-
-func checkTiffTag( ifd *ifdd ) error {
-//    fmt.Printf( "checkTiffTag: tag (%#04x) @offset %#04x type %s count %d\n",
+func storeTiffTags( ifd *ifdd ) error {
+//    fmt.Printf( "storeTiffTags: tag (%#04x) @offset %#04x type %s count %d\n",
 //                 ifd.fTag, ifd.sOffset-8, getTiffTString( ifd.fType ), ifd.fCount )
     switch ifd.fTag {
     case _Compression:
         return ifd.storeTiffCompression( )
+    case _FillOrder:
+
     case _ImageDescription:
         return ifd.storeAsciiString( "ImageDescription" )
     case _Make:
@@ -277,28 +266,30 @@ func checkTiffTag( ifd *ifdd ) error {
         return ifd.storeAsciiString( "Date" )
     case _HostComputer:
         return ifd.storeAsciiString( "HostComputer" )
-    case _YCbCrPositioning:
-        return ifd.storeTiffYCbCrPositioning( )
 
     case _JPEGInterchangeFormat:
         return ifd.storeJPEGInterchangeFormat( )
-
     case _JPEGInterchangeFormatLength:
         return ifd.storeJPEGInterchangeFormatLength( )
+
+    case _YCbCrPositioning:
+        return ifd.storeTiffYCbCrPositioning( )
 
     case _Copyright:
         return ifd.storeAsciiString( "Copyright" )
 
     case _ExifIFD:
-        return ifd.storeEmbeddedIfd( "Exif IFD", EXIF, checkExifTag )
+        return ifd.storeEmbeddedIfd( "Exif IFD", EXIF, storeExifTags )
     case  _GpsIFD:
-        return ifd.storeEmbeddedIfd( "GPS IFD", GPS, checkGpsTag )
+        return ifd.storeEmbeddedIfd( "GPS IFD", GPS, storeGpsTags )
 
-    case _Padding:
-        return nil
+    case _Padding:  // silently ignore
+
+    default:
+        fmt.Printf( "storeTiffTags: ignoring unknown or unsupported tag (%#02x) @offset %#04x type %s count %d\n",
+                     ifd.fTag, ifd.sOffset-8, getTiffTString( ifd.fType ), ifd.fCount )
     }
-    return fmt.Errorf( "checkTiffTag: unknown or unsupported tag (%#02x) @offset %#04x type %s count %d\n",
-                       ifd.fTag, ifd.sOffset-8, getTiffTString( ifd.fType ), ifd.fCount )
+    return nil
 }
 
 const (                                     // EXIF IFD specific tags
@@ -377,7 +368,7 @@ const (                                     // EXIF IFD specific tags
     _LensModel                  = 0xa434
 )
 
-func (ifd *ifdd) checkExifVersion( ) error {
+func (ifd *ifdd) storeExifVersion( ) error {
   // special case: tiff type is undefined, but it is actually ASCII
     if ifd.fType != _Undefined {
         return fmt.Errorf( "ExifVersion: invalid byte type (%s)\n", getTiffTString( ifd.fType ) )
@@ -387,7 +378,7 @@ func (ifd *ifdd) checkExifVersion( ) error {
     return nil
 }
 
-func (ifd *ifdd) checkExifExposureTime( ) error {
+func (ifd *ifdd) storeExifExposureTime( ) error {
     fmtv := func( v interface{} ) {
         et := v.([]unsignedRational)
         fmt.Printf( "%f seconds\n", float32(et[0].Numerator)/float32(et[0].Denominator) )
@@ -395,7 +386,7 @@ func (ifd *ifdd) checkExifExposureTime( ) error {
     return ifd.storeUnsignedRationals( "Exposure Time", 1, fmtv )
 }
 
-func (ifd *ifdd) checkExifExposureProgram( ) error {
+func (ifd *ifdd) storeExifExposureProgram( ) error {
     fmtv := func( v interface{} ) {
         ep := v.([]uint16)
         var epString string
@@ -417,7 +408,7 @@ func (ifd *ifdd) checkExifExposureProgram( ) error {
     return ifd.storeUnsignedShorts( "Exposure Program", 1, fmtv )
 }
 
-func (ifd *ifdd) checkExifComponentsConfiguration( ) error {
+func (ifd *ifdd) storeExifComponentsConfiguration( ) error {
 
     p := func( v interface{} ) {
         bSlice := v.([]byte)
@@ -437,10 +428,10 @@ func (ifd *ifdd) checkExifComponentsConfiguration( ) error {
         fmt.Printf( "%s\n", config.String() )
     }
 
-    return ifd.storeUndefinedAsBytes( "Components Configuration", 4, p )
+    return ifd.storeUndefinedAsUnsignedBytes( "Components Configuration", 4, p )
 }
 
-func (ifd *ifdd) checkExifSubjectDistance( ) error {
+func (ifd *ifdd) storeExifSubjectDistance( ) error {
     fmtv := func( v interface{} ) {
         sd := v.([]unsignedRational)
         if sd[0].Numerator == 0 {
@@ -455,7 +446,7 @@ func (ifd *ifdd) checkExifSubjectDistance( ) error {
     return ifd.storeUnsignedRationals( "Subject Distance", 1, fmtv )
 }
 
-func (ifd *ifdd) checkExifMeteringMode( ) error {
+func (ifd *ifdd) storeExifMeteringMode( ) error {
     fmtv := func( v interface{} ) {
         mm := v.([]uint16)
         var mmString string
@@ -477,7 +468,7 @@ func (ifd *ifdd) checkExifMeteringMode( ) error {
     return ifd.storeUnsignedShorts( "Metering Mode", 1, fmtv )
 }
 
-func (ifd *ifdd) checkExifLightSource( ) error {
+func (ifd *ifdd) storeExifLightSource( ) error {
     fmtv := func( v interface{} ) {
         ls := v.([]uint16)
         var lsString string
@@ -512,7 +503,7 @@ func (ifd *ifdd) checkExifLightSource( ) error {
     return ifd.storeUnsignedShorts( "Light Source", 1, fmtv )
 }
 
-func (ifd *ifdd) checkExifFlash( ) error {
+func (ifd *ifdd) storeExifFlash( ) error {
     fmtv := func( v interface{} ) {
         f := v.([]uint16)
         var fString string
@@ -547,7 +538,7 @@ func (ifd *ifdd) checkExifFlash( ) error {
     return ifd.storeUnsignedShorts( "Flash", 1, fmtv )
 }
 
-func (ifd *ifdd) checkExifSubjectArea( ) error {
+func (ifd *ifdd) storeExifSubjectArea( ) error {
     if ifd.fCount < 2 && ifd.fCount > 4 {
         return fmt.Errorf( "Subject Area: invalid count (%d)\n", ifd.fCount )
     }
@@ -568,7 +559,7 @@ func (ifd *ifdd) checkExifSubjectArea( ) error {
     return ifd.storeUnsignedShorts( "Subject Area", 0, fmsa )
 }
 
-func (ifd *ifdd) checkExifMakerNote( ) error {
+func (ifd *ifdd) storeExifMakerNote( ) error {
     if ifd.fType != _Undefined {
         return fmt.Errorf( "MakerNote: invalid type (%s)\n", getTiffTString( ifd.fType ) )
     }
@@ -581,10 +572,10 @@ func (ifd *ifdd) checkExifMakerNote( ) error {
             }
         }
     }
-    return fmt.Errorf( "checkExifMakerNote: unknown maker\n")
+    return fmt.Errorf( "storeExifMakerNote: unknown maker\n")
 }
 
-func (ifd *ifdd) checkExifUserComment( ) error {
+func (ifd *ifdd) storeExifUserComment( ) error {
     if ifd.fType != _Undefined {
         return fmt.Errorf( "UserComment: invalid type (%s)\n", getTiffTString( ifd.fType ) )
     }
@@ -634,7 +625,7 @@ func (ifd *ifdd) checkExifUserComment( ) error {
     return nil
 }
 
-func (ifd *ifdd) checkFlashpixVersion( ) error {
+func (ifd *ifdd) storeExifFlashpixVersion( ) error {
     if ifd.fType != _Undefined {
         return fmt.Errorf( "FlashpixVersion: invalid type (%s)\n", getTiffTString( ifd.fType ) )
     }
@@ -646,7 +637,7 @@ func (ifd *ifdd) checkFlashpixVersion( ) error {
     return nil
 }
 
-func (ifd *ifdd) checkExifColorSpace( ) error {
+func (ifd *ifdd) storeExifColorSpace( ) error {
     fmtv := func( v interface{} ) {
         cs := v.([]uint16)
         var csString string
@@ -662,7 +653,7 @@ func (ifd *ifdd) checkExifColorSpace( ) error {
     return ifd.storeUnsignedShorts( "Color Space", 1, fmtv )
 }
 
-func (ifd *ifdd) checkExifDimension( name string ) error {
+func (ifd *ifdd) storeExifDimension( name string ) error {
     if ifd.fType == _UnsignedShort {
         return ifd.storeUnsignedShorts( name, 1, nil )
     } else if ifd.fType == _UnsignedLong {
@@ -671,7 +662,7 @@ func (ifd *ifdd) checkExifDimension( name string ) error {
     return fmt.Errorf( "%s: invalid type (%s)\n", name, getTiffTString( ifd.fType ) )
 }
 
-func (ifd *ifdd) checkExifSensingMethod( ) error {
+func (ifd *ifdd) storeExifSensingMethod( ) error {
     fmtv := func( v interface{} ) {
         sm := v.([]uint16)
         var smString string
@@ -692,7 +683,7 @@ func (ifd *ifdd) checkExifSensingMethod( ) error {
     return ifd.storeUnsignedShorts( "Sensing Method", 1, fmtv )
 }
 
-func (ifd *ifdd) checkExifFileSource( ) error {
+func (ifd *ifdd) storeExifFileSource( ) error {
     fmtv := func( v interface{} ) {  // undfined but expect byte
         bs := v.([]byte)
         if bs[0] != 3 {
@@ -701,10 +692,10 @@ func (ifd *ifdd) checkExifFileSource( ) error {
         }
         fmt.Printf( "Digital Still Camera (DSC)\n" )
     }
-    return ifd.storeUndefinedAsBytes( "File Source", 1, fmtv )
+    return ifd.storeUndefinedAsUnsignedBytes( "File Source", 1, fmtv )
 }
 
-func (ifd *ifdd) checkExifSceneType( ) error {
+func (ifd *ifdd) storeExifSceneType( ) error {
     fmtv := func( v interface{} ) {  // undefined but expect byte
         bs := v.([]byte)
         var stString string
@@ -716,10 +707,10 @@ func (ifd *ifdd) checkExifSceneType( ) error {
         }
         fmt.Printf( "%s\n", stString )
     }
-    return ifd.storeUndefinedAsBytes( "Scene Type", 1, fmtv )
+    return ifd.storeUndefinedAsUnsignedBytes( "Scene Type", 1, fmtv )
 }
 
-func (ifd *ifdd) checkExifCFAPattern( ) error {
+func (ifd *ifdd) storeExifCFAPattern( ) error {
     if ifd.fType != _Undefined {
         return fmt.Errorf( "CFAPattern: invalid type (%s)\n", getTiffTString( ifd.fType ) )
     }
@@ -774,7 +765,7 @@ func (ifd *ifdd) checkExifCFAPattern( ) error {
     return nil
 }
 
-func (ifd *ifdd) checkExifCustomRendered( ) error {
+func (ifd *ifdd) storeExifCustomRendered( ) error {
     fmtv := func( v interface{} ) {
         cr := v.([]uint16)
         switch cr[0] {
@@ -786,7 +777,7 @@ func (ifd *ifdd) checkExifCustomRendered( ) error {
     return ifd.storeUnsignedShorts( "Custom Rendered", 1, fmtv )
 }
 
-func (ifd *ifdd) checkExifExposureMode( ) error {
+func (ifd *ifdd) storeExifExposureMode( ) error {
     fmtv := func( v interface{} ) {
         em := v.([]uint16)
         var emString string
@@ -803,7 +794,7 @@ func (ifd *ifdd) checkExifExposureMode( ) error {
     return ifd.storeUnsignedShorts( "Exposure Mode", 1, fmtv )
 }
 
-func (ifd *ifdd) checkExifWhiteBalance( ) error {
+func (ifd *ifdd) storeExifWhiteBalance( ) error {
     fmtv := func( v interface{} ) {
         wb := v.([]uint16)
         var wbString string
@@ -819,7 +810,7 @@ func (ifd *ifdd) checkExifWhiteBalance( ) error {
     return ifd.storeUnsignedShorts( "White Balance", 1, fmtv )
 }
 
-func (ifd *ifdd) checkExifDigitalZoomRatio( ) error {
+func (ifd *ifdd) storeExifDigitalZoomRatio( ) error {
     fmv := func( v interface{} ) {
         dzr := v.([]unsignedRational)
         if dzr[0].Numerator == 0 {
@@ -834,7 +825,7 @@ func (ifd *ifdd) checkExifDigitalZoomRatio( ) error {
     return ifd.storeUnsignedRationals( "Digital-Zoom Ratio", 1, fmv )
 }
 
-func (ifd *ifdd) checkExifSceneCaptureType( ) error {
+func (ifd *ifdd) storeExifSceneCaptureType( ) error {
     fmtv := func( v interface{} ) {
         ct := v.([]uint16)
         var sctString string
@@ -852,7 +843,7 @@ func (ifd *ifdd) checkExifSceneCaptureType( ) error {
     return ifd.storeUnsignedShorts( "Scene-Capture Type", 1, fmtv )
 }
 
-func (ifd *ifdd) checkExifGainControl( ) error {
+func (ifd *ifdd) storeExifGainControl( ) error {
     fmtv := func( v interface{} ) {
         gc := v.([]uint16)
         var gcString string
@@ -871,7 +862,7 @@ func (ifd *ifdd) checkExifGainControl( ) error {
     return ifd.storeUnsignedShorts( "Gain Control", 1, fmtv )
 }
 
-func (ifd *ifdd) checkExifContrast( ) error {
+func (ifd *ifdd) storeExifContrast( ) error {
     fmtv := func( v interface{} ) {
         c := v.([]uint16)
         var cString string
@@ -888,7 +879,7 @@ func (ifd *ifdd) checkExifContrast( ) error {
     return ifd.storeUnsignedShorts( "Contrast", 1, fmtv )
 }
 
-func (ifd *ifdd) checkExifSaturation( ) error {
+func (ifd *ifdd) storeExifSaturation( ) error {
     fmtv := func( v interface{} ) {
         s := v.([]uint16)
         var sString string
@@ -905,7 +896,7 @@ func (ifd *ifdd) checkExifSaturation( ) error {
     return ifd.storeUnsignedShorts( "Saturation", 1, fmtv )
 }
 
-func (ifd *ifdd) checkExifSharpness( ) error {
+func (ifd *ifdd) storeExifSharpness( ) error {
     fmtv := func( v interface{} ) {
         s := v.([]uint16)
         var sString string
@@ -922,7 +913,7 @@ func (ifd *ifdd) checkExifSharpness( ) error {
     return ifd.storeUnsignedShorts( "Sharpness", 1, fmtv )
 }
 
-func (ifd *ifdd) checkExifDistanceRange( ) error {
+func (ifd *ifdd) storeExifDistanceRange( ) error {
     fmtv := func( v interface{} ) {
         dr := v.([]uint16)
         var drString string
@@ -940,7 +931,7 @@ func (ifd *ifdd) checkExifDistanceRange( ) error {
     return ifd.storeUnsignedShorts( "Distance Range", 1, fmtv )
 }
 
-func (ifd *ifdd) checkExifLensSpecification( ) error {
+func (ifd *ifdd) storeExifLensSpecification( ) error {
 // LensSpecification is an array of ordered unsignedRational values:
 //  minimum focal length
 //  maximum focal length
@@ -968,21 +959,21 @@ func (ifd *ifdd) checkExifLensSpecification( ) error {
     return ifd.storeUnsignedRationals( "Lens Specification", 4, fmls )
 }
 
-func checkExifTag( ifd *ifdd ) error {
-//    fmt.Printf( "checkExifTag: tag (%#04x) @offset %#04x type %s count %d\n",
+func storeExifTags( ifd *ifdd ) error {
+//    fmt.Printf( "storeExifTags: tag (%#04x) @offset %#04x type %s count %d\n",
 //                 ifd.fTag, ifd.sOffset-8, getTiffTString( ifd.fType ), ifd.fCount )
     switch ifd.fTag {
     case _ExposureTime:
-        return ifd.checkExifExposureTime( )
+        return ifd.storeExifExposureTime( )
     case _FNumber:
         return ifd.storeUnsignedRationals( "FNumber", 1, nil )
     case _ExposureProgram:
-        return ifd.checkExifExposureProgram( )
+        return ifd.storeExifExposureProgram( )
 
     case _ISOSpeedRatings:
         return ifd.storeUnsignedShorts( "ISO Speed Ratings", 1, nil )
     case _ExifVersion:
-        return ifd.checkExifVersion( )
+        return ifd.storeExifVersion( )
 
     case _DateTimeOriginal:
         return ifd.storeAsciiString( "DateTime Original" )
@@ -997,7 +988,7 @@ func checkExifTag( ifd *ifdd ) error {
         return ifd.storeAsciiString( "Offset Time Digitized" )
 
     case _ComponentsConfiguration:
-        return ifd.checkExifComponentsConfiguration( )
+        return ifd.storeExifComponentsConfiguration( )
     case _CompressedBitsPerPixel:
         return ifd.storeUnsignedRationals( "Compressed Bits Per Pixel", 1, nil )
     case _ShutterSpeedValue:
@@ -1011,22 +1002,22 @@ func checkExifTag( ifd *ifdd ) error {
     case _MaxApertureValue:
         return ifd.storeUnsignedRationals( "Max Aperture Value", 1, nil )
     case _SubjectDistance:
-        return ifd.checkExifSubjectDistance( )
+        return ifd.storeExifSubjectDistance( )
     case _MeteringMode:
-        return ifd.checkExifMeteringMode( )
+        return ifd.storeExifMeteringMode( )
     case _LightSource:
-        return ifd.checkExifLightSource( )
+        return ifd.storeExifLightSource( )
     case _Flash:
-        return ifd.checkExifFlash( )
+        return ifd.storeExifFlash( )
     case _FocalLength:
         return ifd.storeUnsignedRationals( "Focal Length", 1, nil )
     case _SubjectArea:
-        return ifd.checkExifSubjectArea( )
+        return ifd.storeExifSubjectArea( )
 
     case _MakerNote:
-        return ifd.checkExifMakerNote( )
+        return ifd.storeExifMakerNote( )
     case _UserComment:
-        return ifd.checkExifUserComment( )
+        return ifd.storeExifUserComment( )
     case _SubsecTime:
         return ifd.storeAsciiString( "Subsec Time" )
     case _SubsecTimeOriginal:
@@ -1034,62 +1025,64 @@ func checkExifTag( ifd *ifdd ) error {
     case _SubsecTimeDigitized:
         return ifd.storeAsciiString( "Subsec Time Digitized" )
     case _FlashpixVersion:
-        return ifd.checkFlashpixVersion( )
+        return ifd.storeExifFlashpixVersion( )
 
     case _ColorSpace:
-        return ifd.checkExifColorSpace( )
+        return ifd.storeExifColorSpace( )
     case _PixelXDimension:
-        return ifd.checkExifDimension( "PixelX Dimension" )
+        return ifd.storeExifDimension( "PixelX Dimension" )
     case _PixelYDimension:
-        return ifd.checkExifDimension( "PixelY Dimension" )
+        return ifd.storeExifDimension( "PixelY Dimension" )
 
     case _SensingMethod:
-        return ifd.checkExifSensingMethod( )
+        return ifd.storeExifSensingMethod( )
     case _FileSource:
-        return ifd.checkExifFileSource( )
+        return ifd.storeExifFileSource( )
     case _SceneType:
-        return ifd.checkExifSceneType( )
+        return ifd.storeExifSceneType( )
     case _CFAPattern:
-        return ifd.checkExifCFAPattern( )
+        return ifd.storeExifCFAPattern( )
     case _CustomRendered:
-        return ifd.checkExifCustomRendered( )
+        return ifd.storeExifCustomRendered( )
     case _ExposureMode:
-        return ifd.checkExifExposureMode( )
+        return ifd.storeExifExposureMode( )
     case _WhiteBalance:
-        return ifd.checkExifWhiteBalance( )
+        return ifd.storeExifWhiteBalance( )
     case _DigitalZoomRatio:
-        return ifd.checkExifDigitalZoomRatio( )
+        return ifd.storeExifDigitalZoomRatio( )
     case _FocalLengthIn35mmFilm:
         return ifd.storeUnsignedShorts( "Focal Length In 35mm Film", 1, nil )
     case _SceneCaptureType:
-        return ifd.checkExifSceneCaptureType( )
+        return ifd.storeExifSceneCaptureType( )
     case _GainControl:
-        return ifd.checkExifGainControl( )
+        return ifd.storeExifGainControl( )
     case _Contrast:
-        return ifd.checkExifContrast( )
+        return ifd.storeExifContrast( )
     case _Saturation:
-        return ifd.checkExifSaturation( )
+        return ifd.storeExifSaturation( )
     case _Sharpness:
-        return ifd.checkExifSharpness( )
+        return ifd.storeExifSharpness( )
     case _SubjectDistanceRange:
-        return ifd.checkExifDistanceRange( )
+        return ifd.storeExifDistanceRange( )
     case _ImageUniqueID:
         return ifd.storeAsciiString( "Image Unique ID " )
     case _LensSpecification:
-        return ifd.checkExifLensSpecification( )
+        return ifd.storeExifLensSpecification( )
     case _LensMake:
         return ifd.storeAsciiString( "Lens Make" )
     case _LensModel:
         return ifd.storeAsciiString( "Lens Model" )
 
     case _InteroperabilityIFD:
-        return ifd.storeEmbeddedIfd( "IOP IFD", IOP, checkIopTag )
+        return ifd.storeEmbeddedIfd( "IOP IFD", IOP, storeIopTags )
 
-    case _Padding:
-        return nil
+    case _Padding:  // silently ignore
+
+    default:
+        fmt.Printf( "storeExifTags: ignoring unknown or unsupported tag (%#02x) @offset %#04x type %s count %d\n",
+                    ifd.fTag, ifd.sOffset-8, getTiffTString( ifd.fType ), ifd.fCount )
     }
-    return fmt.Errorf( "checkExifTag: unknown or unsupported tag (%#02x) @offset %#04x type %s count %d\n",
-                       ifd.fTag, ifd.sOffset-8, getTiffTString( ifd.fType ), ifd.fCount )
+    return nil
 }
 
 const (                                     // _GPS IFD specific tags
@@ -1126,30 +1119,23 @@ const (                                     // _GPS IFD specific tags
     _GPSDifferential        = 0x1e
 )
 
-func (ifd *ifdd) checkGPSVersionID( ) error {
-    if ifd.fCount != 4 {
-        return fmt.Errorf( "GPSVersionID: invalid count (%d)\n", ifd.fCount )
+func (ifd *ifdd) storeGPSVersionID( ) error {
+    p := func( v interface{} ) {
+        vid := v.([]byte)
+        fmt.Printf("%d.%d.%d.%d\n", vid[0], vid[1], vid[2], vid[3] )
     }
-    if ifd.fType != _UnsignedByte {
-        return fmt.Errorf( "GPSVersionID: invalid type (%s)\n", getTiffTString( ifd.fType ) )
-    }
-
-    slc := ifd.desc.getUnsignedBytes( ifd.sOffset, ifd.fCount )  // 4 bytes fit in directory entry
-    f := func( v interface{} ) {
-        slc := v.([]byte)
-        fmt.Printf("%d.%d.%d.%d\n", slc[0], slc[1], slc[2], slc[3] )
-    }
-    ifd.storeValue( ifd.newUnsignedByteValue( "GPS Version ID", f, slc ) )
-    return nil
+    return ifd.storeUnsignedBytes( "GPS Version ID", 4, p )
 }
 
-func checkGpsTag( ifd *ifdd ) error {
+func storeGpsTags( ifd *ifdd ) error {
     switch ifd.fTag {
     case _GPSVersionID:
-        return ifd.checkGPSVersionID( )
+        return ifd.storeGPSVersionID( )
+    default:
+        fmt.Printf( "storeGpsTags: ignoring unknown or unsupported tag (%#02x) @offset %#04x type %s count %d\n",
+                    ifd.fTag, ifd.sOffset-8, getTiffTString( ifd.fType ), ifd.fCount )
     }
-    return fmt.Errorf( "checkGpsTag: unknown or unsupported tag (%#02x) @offset %#04x type %s count %d\n",
-                       ifd.fTag, ifd.sOffset-8, getTiffTString( ifd.fType ), ifd.fCount )
+    return nil
 }
 
 const (                                     // _IOP IFD tags
@@ -1157,44 +1143,32 @@ const (                                     // _IOP IFD tags
     _InteroperabilityVersion    = 0x02
 )
 
-func (ifd *ifdd) checkInteroperabilityVersion( ) error {
-    if ifd.fType != _Undefined {
-        return fmt.Errorf( "InteroperabilityVersion: invalid type (%s)\n",
-                            getTiffTString( ifd.fType ) )
-    }
-    if ifd.fCount != 4 {
-        return fmt.Errorf( "InteroperabilityVersion: invalid count (%d)\n",
-                           ifd.fCount )
-    }
-    bs := ifd.getUnsignedBytes( )    // assuming bytes
-    f := func( v interface{} ) {
+func (ifd *ifdd) storeInteroperabilityVersion( ) error {
+    p := func( v interface{} ) {
         bs := v.([]byte)
         fmt.Printf( "%#02x, %#02x, %#02x, %#02x\n", bs[0], bs[1], bs[2], bs[3] )
     }
-    ifd.storeValue( ifd.newUnsignedByteValue( "Interoperability Version", f, bs ) )
-    return nil
+    return ifd.storeUndefinedAsUnsignedBytes( "Interoperability Version", 4, p )
 }
 
-func checkIopTag( ifd *ifdd ) error {
+func storeIopTags( ifd *ifdd ) error {
     switch ifd.fTag {
     case _InteroperabilityIndex:
         return ifd.storeAsciiString( "Interoperability" )
     case _InteroperabilityVersion:
-        return ifd.checkInteroperabilityVersion( )
+        return ifd.storeInteroperabilityVersion( )
     default:
-        if ifd.desc.Print {
-            fmt.Printf( "    unknown or unsupported tag (%#02x) @offset %#04x type %s count %d\n",
-                        ifd.fTag, ifd.sOffset-8, getTiffTString( ifd.fType), ifd.fCount )
-        }
+        fmt.Printf( "storeIopTags: ignoring unknown or unsupported tag (%#02x) @offset %#04x type %s count %d\n",
+                    ifd.fTag, ifd.sOffset-8, getTiffTString( ifd.fType), ifd.fCount )
     }
     return nil
 }
 
-// checkIfd makes a new ifdd, check all entries and store the corresponding
+// storeIfd makes a new ifdd, checks all entries and store the corresponding
 // values in the ifdd. It returns the offset of the next ifd in list (0 if
 // none), the newly created ifdd and an error if it failed.
-func (d *Desc) checkIFD( id IfdId, start uint32,
-                         checkTags func(*ifdd) error ) ( uint32, *ifdd, error ) {
+func (d *Desc) storeIFD( id IfdId, start uint32,
+                         storeTags func(*ifdd) error ) ( uint32, *ifdd, error ) {
 
     /*
         Image File Directory starts with the number of following directory entries (2 bytes)
@@ -1218,12 +1192,13 @@ func (d *Desc) checkIFD( id IfdId, start uint32,
         ifd.fCount = d.getUnsignedLong( ifd.sOffset + 4 )
         ifd.sOffset += 8
 
-        err := checkTags( ifd )
+        err := storeTags( ifd )
         if err != nil {
-            return 0, nil, fmt.Errorf( "checkIFD: invalid field: %v\n", err )
+            return 0, nil, fmt.Errorf( "storeIFD: invalid field: %v", err )
         }
         ifd.sOffset += 4
     }
+    d.ifds[id] = ifd                            // store in flat ifd array
     offset := d.getUnsignedLong( ifd.sOffset )  // next IFD offset in list
     return offset, ifd, nil
 }

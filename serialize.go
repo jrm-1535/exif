@@ -64,12 +64,12 @@ func (d *Desc)serialize( w io.Writer ) (written int, err error) {
             return
         }
         written += int(ns)
-        if d.tOffset != 0 {    // store embedded thumnail data
-            var nw int
-            nw, err = w.Write( d.data[d.tOffset:d.tOffset+d.tLen] )
-            if err == nil {
-                written += nw
-            }
+        tOffset, _ := d.global["thumbOffset"].(uint32)
+        tLen, _ := d.global["thumbLen"].(uint32)
+        var nw int      // store embedded thumnail data
+        nw, err = w.Write( d.data[tOffset:tOffset+tLen] )
+        if err == nil {
+            written += nw
         }
     }
     return
