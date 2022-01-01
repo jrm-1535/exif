@@ -5,6 +5,7 @@ import (
     "encoding/binary"
     "io"
     "os"
+    "reflect"
 )
 
 // common IFD entry structure (offset/value are specific to each value)
@@ -245,13 +246,16 @@ type tVal struct {
 type descValue struct {     // used for some maker notes
             tVal
     header  string
+    origin  uint32
     v      *Desc
 }
-func (ifd *ifdd) newDescValue( dVal *Desc, header string ) (av *descValue) {
-    dv := new( descValue )
+func (ifd *ifdd) newDescValue( dVal *Desc, header string,
+                               origin uint32 ) (dv *descValue) {
+    dv = new( descValue )
     dv.ifd = ifd
     dv.vTag = ifd.fTag
     dv.vType = ifd.fType
+    dv.origin = origin
 //  dv.vCount will be calculated when serializeEntry is called
     dv.header = header
     dv.v = dVal
@@ -259,18 +263,21 @@ func (ifd *ifdd) newDescValue( dVal *Desc, header string ) (av *descValue) {
 }
 
 func (dv *descValue) serializeEntry( w io.Writer ) (err error) {
-
     sz := dv.v.root.dSize
     if sz == 0 {
-        _, err = dv.v.root.serializeEntries( io.Discard, uint32(len(dv.header)) )
+        fmt.Printf( "%s ifd Getting %s ifd size @offset %#08x\n",
+                    dv.ifd.getIfdName(), dv.v.root.getIfdName(), dv.ifd.dOffset )
+        _, err = dv.v.root.serializeEntries( io.Discard, 0 )
         if err != nil {
             return
         }
-        sz = dv.v.root.dOffset
+        sz = dv.v.root.dOffset + uint32(len(dv.header))
         dv.v.root.dSize = sz
     }
 
     dv.vCount = sz
+    fmt.Printf( "%s ifd got embedded %s ifd size=%d\n",
+                dv.ifd.getIfdName(), dv.v.root.getIfdName(), sz )
     if err = binary.Write( w, dv.ifd.desc.endian, dv.tVal.tEntry ); err == nil {
         err = binary.Write( w, dv.ifd.desc.endian, dv.ifd.dOffset )
         dv.ifd.dOffset += sz
@@ -279,16 +286,20 @@ func (dv *descValue) serializeEntry( w io.Writer ) (err error) {
 }
 
 func (dv *descValue)serializeData( w io.Writer ) (err error) {
+    fmt.Printf( "%s ifd Serialize in data whole %s ifd @offset %#08x\n",
+        dv.ifd.getIfdName(), dv.v.root.getIfdName(), dv.ifd.dOffset )
 
     _, err = w.Write( []byte( dv.header ) )
     if err != nil {
         return
     }
-    _, err = dv.v.root.serializeEntries( w, uint32(len(dv.header)) )
+//    _, err = dv.v.root.serializeEntries( w, dv.ifd.dOffset + uint32(len(dv.header)) )
+    _, err = dv.v.root.serializeEntries( w, dv.origin )
     if err != nil {
         return
     }
-    _, err = dv.v.root.serializeDataArea( w, uint32(len(dv.header)) )
+//    _, err = dv.v.root.serializeDataArea( w, dv.ifd.dOffset + uint32(len(dv.header)) )
+    _, err = dv.v.root.serializeDataArea( w, dv.origin )
     if err != nil {
         return
     }
@@ -320,26 +331,27 @@ func (iv *ifdValue) serializeEntry( w io.Writer ) (err error) {
 
     sz := iv.v.dSize
     if sz == 0 {
-        fmt.Printf( "ifd %d Getting embedded IFD ID=%d size @offset %#08x\n",
-                    iv.ifd.id, iv.v.id, iv.ifd.dOffset )
+        fmt.Printf( "%s ifd Getting %s ifd size @offset %#08x\n",
+                    iv.ifd.getIfdName(), iv.v.getIfdName(), iv.ifd.dOffset )
         _, err = iv.v.serializeEntries( io.Discard, 0 )
         if err != nil {
-            fmt.Printf( "ifd %d Getting embedded IFD ID=%d size failed: %v\n",
-                        iv.ifd.id, iv.v.id, err )
+            fmt.Printf( "%s ifd Getting %s ifd size failed: %v\n",
+                        iv.ifd.getIfdName(), iv.v.getIfdName(), err )
             return
         }
-        sz = iv.v.dOffset   // since we serialzed from offset 0
+        sz = iv.v.dOffset   // since we serialized from offset 0
         iv.v.dSize = sz     // save in case serializeEntry is called again
     }
 
-    fmt.Printf( "ifd %d embedded IFD ID=%d size=%d\n", iv.ifd.id, iv.v.id, sz )
+    fmt.Printf( "%s ifd got embedded %s ifd size=%d\n",
+                iv.ifd.getIfdName(), iv.v.getIfdName(), sz )
     err = binary.Write( w, iv.ifd.desc.endian, iv.ifd.dOffset )
     iv.ifd.dOffset += sz
     return
 }
 func (iv *ifdValue)serializeData( w io.Writer ) (err error) {
-    fmt.Printf( "ifd %d Serialize embedded whole IFD %d @offset %#08x\n",
-        iv.ifd.id, iv.v.id, iv.ifd.dOffset )
+    fmt.Printf( "%s ifd Serialize in data whole %s ifd @offset %#08x\n",
+        iv.ifd.getIfdName(), iv.v.getIfdName(), iv.ifd.dOffset )
     var eSz, dSz uint32
     eSz, err = iv.v.serializeEntries( w, iv.ifd.dOffset )
     if err != nil {
@@ -353,6 +365,38 @@ func (iv *ifdValue)serializeData( w io.Writer ) (err error) {
 }
 func (iv *ifdValue)format( w io.Writer ) {
     return  // Do nothing. The IFD will be separately formatted.
+}
+
+type thumbnailValue struct {
+        tVal
+    v   []uint8
+}
+func (ifd *ifdd) newThumbnailValue( tag tTag, tbnVal []uint8 ) (tbn *thumbnailValue) {
+    tbn = new( thumbnailValue )
+    tbn.ifd = ifd
+    tbn.vTag = tag
+    tbn.vType = ifd.fType
+    tbn.vCount = ifd.fCount
+    tbn.v = tbnVal
+    return
+}
+
+func (tbn *thumbnailValue)serializeEntry( w io.Writer ) (err error) {
+    endian := tbn.ifd.desc.endian
+    err = binary.Write( w, endian, tbn.tEntry )
+    if err != nil {
+        return
+    }
+    if err = binary.Write( w, endian, tbn.ifd.dOffset ); err == nil {
+        size := tbn.ifd.getAlignedDataSize( uint32(len(tbn.v)) )
+        tbn.ifd.dOffset += size
+    }
+    return
+}
+func (tbn *thumbnailValue)serializeData( w io.Writer ) error {
+    return tbn.ifd.serializeSliceData( w, tbn.v )
+}
+func (ub *thumbnailValue)format( w io.Writer ) {
 }
 
 type unsignedByteValue struct {
@@ -687,10 +731,17 @@ func (sr *signedRationalValue)format( w io.Writer ) {
 // storage does not presume any ifd data layout. This is done only at serializing
 func (ifd *ifdd) storeValue( value serializer ) {
     i := len(ifd.values)
-    if i >= cap(ifd.values) {
+    if i == cap(ifd.values) {
         panic( "storeValue called with no more current IFD entries\n" )
     }
-
+    if value == nil {
+        panic("storeValue called with nil value\n")
+    }
+    if reflect.ValueOf(value).IsNil() {
+        fmt.Printf( "storeValue called with a nil dynamic value (dynamic type %s)\n",
+                    reflect.TypeOf(value).String() )
+        panic("Stop")
+    }
     ifd.values = ifd.values[:i+1]         // extend slice within capacity
 //    fmt.Printf("storeValue: cap=%d len=%d i=%d\n", cap(ifd.values), len(ifd.values), i )
     ifd.values[i] = value
@@ -856,5 +907,13 @@ func (ifd *ifdd) storeAnyNonUndefined( name string,
     }
     return fmt.Errorf( "storeAnyNonUndefined: unsupported type %s\n",
                        getTiffTString( ifd.fType ) )
+}
+
+func (ifd *ifdd) storeAnyUnknownSilently( ) error {
+    if ifd.fType == _Undefined {
+        return ifd.storeUndefinedAsUnsignedBytes( "", 0, nil )
+    } else {
+        return ifd.storeAnyNonUndefined( "", nil )
+    }
 }
 

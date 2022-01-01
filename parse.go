@@ -134,7 +134,7 @@ When thumbnails use JPEG compression, this tag value is set to 6.
                 fmt.Printf("    Warning: Exif2-2 specifies that in case of JPEG picture compression be omited\n")
             }
         } else {    // _THUMBNAIL
-            ifd.desc.global["tumbType"] = cType  // remember thumnail compression type
+            ifd.desc.global["thumbType"] = cType // remember compression type
         }
 
         fmtCompression := func( v interface{} ) {
@@ -224,16 +224,23 @@ func (ifd *ifdd) storeJPEGInterchangeFormat( ) error {
     if err == nil {
         ifd.desc.global["thumbOffset"] = offset[0]
 //        fmt.Printf( "JPEGInterchangeFormat: offset %#08x\n", offset[0] )
-        ifd.storeValue( ifd.newUnsignedLongValue( "", nil, offset ) )
+//        ifd.storeValue( ifd.newUnsignedLongValue( "", nil, offset ) )
     }
     return err
 }
 
 func (ifd *ifdd) storeJPEGInterchangeFormatLength( ) error {
-    offset, err := ifd.checkUnsignedLongs( 1 )
+    length, err := ifd.checkUnsignedLongs( 1 )
     if err == nil {
-        ifd.desc.global["thumbLen"] = offset[0]
-        ifd.storeValue( ifd.newUnsignedLongValue( "", nil, offset ) )
+        offset := ifd.desc.global["thumbOffset"].(uint32)
+        if offset == 0 {
+            return fmt.Errorf("JPEGInterchangeFormatLength without JPEGInterchangeFormat\n")
+        }
+        ifd.desc.global["thumbLen"] = length[0]
+        ifd.storeValue(
+            ifd.newThumbnailValue( _JPEGInterchangeFormat,
+                                   ifd.desc.data[offset:offset+length[0]] ) )
+        ifd.storeValue( ifd.newUnsignedLongValue( "", nil, length ) )
     }
     return err
 }
@@ -283,11 +290,10 @@ func storeTiffTags( ifd *ifdd ) error {
     case  _GpsIFD:
         return ifd.storeEmbeddedIfd( "GPS IFD", GPS, storeGpsTags )
 
-    case _Padding:  // silently ignore
-
+    case _Padding:
+        return ifd.processPadding( )
     default:
-        fmt.Printf( "storeTiffTags: ignoring unknown or unsupported tag (%#02x) @offset %#04x type %s count %d\n",
-                     ifd.fTag, ifd.sOffset-8, getTiffTString( ifd.fType ), ifd.fCount )
+        return ifd.processUnknownTag( )
     }
     return nil
 }
@@ -592,30 +598,22 @@ func (ifd *ifdd) storeExifUserComment( ) error {
         switch encoding[0] {
         case 0x41:  // ASCII?
             if bytes.Equal( encoding, []byte{ 'A', 'S', 'C', 'I', 'I', 0, 0, 0 } ) {
-                if ifd.desc.Print {
-                    fmt.Printf( " ITU-T T.50 IA5 (ASCII) [%s]\n", string(ud[8:]) )
-                }
+                fmt.Printf( " ITU-T T.50 IA5 (ASCII) [%s]\n", string(ud[8:]) )
             }
         case 0x4a: // JIS?
             if bytes.Equal( encoding, []byte{ 'J', 'I', 'S', 0, 0, 0, 0, 0 } ) {
-                if ifd.desc.Print {
-                    fmt.Printf( "JIS X208-1990 (JIS):" )
-                    dumpData( "    UserComment", "      ", ud[8:] )
-                }
+                fmt.Printf( "JIS X208-1990 (JIS):" )
+                dumpData( "    UserComment", "      ", ud[8:] )
             }
         case 0x55:  // UNICODE?
             if bytes.Equal( encoding, []byte{ 'U', 'N', 'I', 'C', 'O', 'D', 'E', 0 } ) {
-                if ifd.desc.Print {
-                    fmt.Printf( "Unicode Standard:" )
-                    dumpData( "    UserComment", "      ", ud[8:] )
-                }
+                fmt.Printf( "Unicode Standard:" )
+                dumpData( "    UserComment", "      ", ud[8:] )
             }
         case 0x00:  // Undefined
             if bytes.Equal( encoding, []byte{ 0, 0, 0, 0, 0, 0, 0, 0 } ) {
-                if ifd.desc.Print {
-                    fmt.Printf( "Undefined encoding:" )
-                    dumpData( "    UserComment", "      ", ud[8:] )
-                }
+                fmt.Printf( "Undefined encoding:" )
+                dumpData( "    UserComment", "      ", ud[8:] )
             }
         default:
             fmt.Printf( "Invalid encoding\n" )
@@ -1076,11 +1074,10 @@ func storeExifTags( ifd *ifdd ) error {
     case _InteroperabilityIFD:
         return ifd.storeEmbeddedIfd( "IOP IFD", IOP, storeIopTags )
 
-    case _Padding:  // silently ignore
-
+    case _Padding:
+        return ifd.processPadding( )
     default:
-        fmt.Printf( "storeExifTags: ignoring unknown or unsupported tag (%#02x) @offset %#04x type %s count %d\n",
-                    ifd.fTag, ifd.sOffset-8, getTiffTString( ifd.fType ), ifd.fCount )
+        return ifd.processUnknownTag( )
     }
     return nil
 }
@@ -1132,10 +1129,8 @@ func storeGpsTags( ifd *ifdd ) error {
     case _GPSVersionID:
         return ifd.storeGPSVersionID( )
     default:
-        fmt.Printf( "storeGpsTags: ignoring unknown or unsupported tag (%#02x) @offset %#04x type %s count %d\n",
-                    ifd.fTag, ifd.sOffset-8, getTiffTString( ifd.fType ), ifd.fCount )
+        return ifd.processUnknownTag( )
     }
-    return nil
 }
 
 const (                                     // _IOP IFD tags
@@ -1158,10 +1153,8 @@ func storeIopTags( ifd *ifdd ) error {
     case _InteroperabilityVersion:
         return ifd.storeInteroperabilityVersion( )
     default:
-        fmt.Printf( "storeIopTags: ignoring unknown or unsupported tag (%#02x) @offset %#04x type %s count %d\n",
-                    ifd.fTag, ifd.sOffset-8, getTiffTString( ifd.fType), ifd.fCount )
+        return ifd.processUnknownTag( )
     }
-    return nil
 }
 
 // storeIfd makes a new ifdd, checks all entries and store the corresponding

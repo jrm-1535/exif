@@ -7,6 +7,7 @@ import (
     "strings"
     "encoding/binary"
     "io/ioutil"
+    "io"
     "os"
 )
 
@@ -70,8 +71,39 @@ const (
     PackBits
 )
 
+func GetCompressionString( c Compression ) string {
+    switch c {
+    case NotCompressed:         return "Not compressed"
+    case CCITT_1D:              return "CCITT 1D"
+    case CCITT_Group3:          return "CCITT Group 3"
+    case CCITT_Group4:          return "CCITT Group 4"
+    case LZW:                   return "LZW"
+    case JPEG:                  return "JPEG"
+    case JPEG_Technote2:        return "JPEG (Technote 2)"
+    case Deflate:               return "DEFLATE"
+    case RFC_2301_BW_JBIG:      return "RFC_2301_BW_JBIG"
+    case RFC_2301_Color_JBIG:   return "RFC_2301_Color_JBIG"
+    case PackBits:              return "PACKBITS"
+    default: break
+    }
+    return "Unknown"
+}
+
+// Control Unknown tag BitMask:
+// 0 => Silently keep tag
+// 1 => Warn and keep tag
+// 2 => Silently remove tag
+// 3 => Warn and remove tag
+// 4,5,6,7 => stop at first unknown tag
+const (
+    Warn    = 1
+    Remove  = 2
+    Stop    = 4
+)
+
 type Control struct {
-    Print bool
+    Unknown uint            // how to deal with unknown tags
+    Align4  bool            // extra alignment for exif data area (e.g Nikon)
 }
 
 type IfdId  uint
@@ -94,6 +126,14 @@ var ifdNames  = [...]string{ "Primary", "Thumbnail", "Exif",
                              "GPS", "Interoperability",
                              "Maker Note", "Maker Note Embedded" }
 
+func (ifd *ifdd) getIfdName( ) string {
+    id := ifd.id
+    if id >= _IFD_N {
+        panic("getIfdName: invalid Ifd Id\n")
+    }
+    return ifdNames[id]
+}
+
 type maker  struct {
     name    string
     try     func( *ifdd, uint32 ) (func( uint32 ) error)
@@ -103,7 +143,8 @@ var makerNotes = [...]maker{ { "Apple", tryAppleMakerNote },
                              { "Nikon", tryNikonMakerNote } }
 
 type Desc struct {
-    data    []byte          // starts at TIFF header (origin after exif header)
+    data    []byte          // starts at TIFF header (right after exif header)
+    origin  uint32          // except for some maker notes
     endian  binary.ByteOrder // endianess as defined in binary
 
     global  map[string]interface{}  // storage for global information
@@ -350,6 +391,29 @@ type ifdd struct {
       next IFD = 0
 */
 
+func (ifd *ifdd) processPadding( ) error {
+    if 0 == ifd.desc.Unknown & Remove {
+        return ifd.storeAnyUnknownSilently( )
+    }
+    return nil
+}
+
+func (ifd *ifdd) processUnknownTag( ) error {
+    if 0 != ifd.desc.Unknown & Warn {
+        fmt.Printf( "%s: unknown or unsupported tag (%#02x) @offset %#04x type %s count %d\n",
+                    ifd.getIfdName(), ifd.fTag, ifd.sOffset-8,
+                    getTiffTString( ifd.fType ), ifd.fCount )
+    }
+    if 0 != ifd.desc.Unknown & Stop {
+        return fmt.Errorf( "%s: storeExifTags: stop at unknown tag %#02x\n",
+                           ifd.getIfdName(), ifd.fTag )
+    }
+    if 0 == ifd.desc.Unknown & Remove {
+        return ifd.storeAnyUnknownSilently( )
+    }
+    return nil
+}
+
 func dumpData( header string, indent string, data []byte ) {
     fmt.Printf( "%s:\n", header )
     for i := 0; i < len(data); i += 16 {
@@ -414,24 +478,8 @@ func Parse( data []byte, start, dLen int, ec *Control ) (*Desc, error) {
         return nil, fmt.Errorf( "exif: invalid signature (%s)\n",
                                 string(data[0:6]) )
     }
-/*
-    // temporary, save exif data into file - exif-src.txt
-    {
-	    f, err := os.OpenFile( "exif-src.bin", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.ModePerm)
-        if err != nil { return nil, err }
-        _, err = f.Write( data[start:start+dLen] )
-        if err != nil { return nil, err }
-        if err = f.Close( ); err != nil { return nil, err }
-        if err != nil { return nil, err }
-    }
-    // end of temporary stuff
-*/
     // Exif\0\0 is followed immediately by TIFF header
     d := newDesc( data[start+_originOffset:start+dLen-_originOffset], ec )
-    if d.Print {
-        fmt.Printf( "APP1 (EXIF)\n" )
-    }
-
     var err error
     d.endian, err = getEndianess( d.data )
     if err != nil {
@@ -514,6 +562,7 @@ func Read( path string, start int, ec *Control ) (*Desc, error) {
 // Write the parsed EXIF metadata into a file. It returns the number of bytes
 // written in the file in case of success or an error in case of failure.
 func (d *Desc)Write( path string ) (n int, err error) {
+
     var f *os.File
     f, err = os.OpenFile( path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.ModePerm)
     if err != nil {
@@ -525,6 +574,23 @@ func (d *Desc)Write( path string ) (n int, err error) {
     }
     fmt.Printf( "wrote %d bytes to %s\n", n, path )
     f.Close( )
+
+    // temporary, save exif data into file - exif-src.txt
+    {
+        ifd := d.root
+        if ifd.next != nil {
+            ifd = ifd.next
+        }
+        dLen := int( ifd.dOffset )
+	    f, err = os.OpenFile( "exif-src.bin", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.ModePerm)
+        _, err = f.Write( []byte( "Exif\x00\x00" ) )
+        _, err = f.Write( d.data[0:dLen] )
+        if err != nil { return 0, err }
+        err = f.Close( )
+        if err != nil { return 0, err }
+    }
+    // end of temporary stuff
+
     return
 }
 
@@ -544,17 +610,24 @@ func (d *Desc)GetThumbnail() (uint32, uint32, Compression) {
     return tOffset, tLen, tType
 }
 
-func (d *Desc)Format( ifdIds []IfdId ) error {
-    fmt.Printf( "Picture Metadata:\n" )
+// Write formatted IFDs on the passed io.Writer argument w
+// if w is nil, os.Stdout is used
+// The IFDs to format are given by their IDs in the slice argument ifdIds
+// Possible ID values are: PRIMARY, THUMBNAIL, EXIF, GPS, IOP, MAKER & EMBEDDED
+func (d *Desc)Format( w io.Writer, ifdIds []IfdId ) error {
+    if w == nil {
+        w = os.Stdout
+    }
+    fmt.Fprintf( w, "Picture Metadata:\n" )
     for i := 0; i < len(ifdIds); i++ {
         id := ifdIds[i]
         if /*id >= PRIMARY &&(*/ id < _IFD_N {
             ifd := d.ifds[id]
             if ifd != nil {
-                fmt.Printf( "--- %s IFD (id %d)\n", ifdNames[id], id )
-                ifd.format( os.Stdout )
+                fmt.Fprintf( w, "--- %s IFD (id %d)\n", ifdNames[id], id )
+                ifd.format( w )
             } else {
-                fmt.Printf( "--- %s IFD (id %d) is absent\n", ifdNames[id], id )
+                fmt.Fprintf( w, "--- %s IFD (id %d) is absent\n", ifdNames[id], id )
             }
         }
     }

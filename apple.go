@@ -483,8 +483,7 @@ func storeAppleTags( ifd *ifdd ) error {
     case _Apple001f:
         return ifd.storeSignedLongs( "  Apple #001f", 1, nil )
     default:
-        fmt.Printf( "storeAppleTags: ignoring unknown or unsupported tag (%#02x) @offset %#04x type %s count %d\n",
-                    ifd.fTag, ifd.sOffset-8, getTiffTString( ifd.fType ), ifd.fCount )
+        return ifd.processUnknownTag( )
     }
     return nil
 }
@@ -503,8 +502,7 @@ func (ifd *ifdd) processAppleMakerNote( offset uint32 ) error {
     // with 10-byte identifier: "Apple iOS\x00", plus 2-byte version \x0001
     // in big endian and a 2-byte endian idendifier: "MM" for big endian,
     // before mapping to a regular IFD structure: 2-byte number of entries
-    // in the IFD followed by the regular IFD entries and IFD data, but no
-    // next IFD offset at the end.
+    // in the IFD followed by the regular IFD entries and IFD data
     endian, err := getEndianess(
                 ifd.desc.data[offset + _APPLE_MAKER_ENDIAN_OFFSET:
                               offset+ifd.fCount - _APPLE_MAKER_ENDIAN_OFFSET] )
@@ -512,7 +510,7 @@ func (ifd *ifdd) processAppleMakerNote( offset uint32 ) error {
         return err
     }
     mknd := new(Desc)
-//    mknd.origin = offset    // origin is before Apple name
+    mknd.Control = ifd.desc.Control     // propagate original control
     mknd.data = ifd.desc.data[offset:offset+ifd.fCount]
     mknd.endian = endian
 
@@ -528,7 +526,8 @@ func (ifd *ifdd) processAppleMakerNote( offset uint32 ) error {
 //                ifd.dOffset + apple.dOffset, ifd.dOffset + ifd.fCount )
 
     mknd.root = apple
-    ifd.storeValue( ifd.newDescValue( mknd, "Apple iOS\x00\x00\x01MM" ) )
+    ifd.storeValue( ifd.newDescValue( mknd, "Apple iOS\x00\x00\x01MM",
+                                      _APPLE_MAKER_IFD_OFFSET ) )
     ifd.desc.ifds[MAKER] = apple
     return err
 }

@@ -32,8 +32,7 @@ func checkNikon3Preview( ifd *ifdd ) error {
     case _YCbCrPositioning:
         return ifd.storeTiffYCbCrPositioning( )
     default:
-        fmt.Printf( "checkNikon3Preview: Unsupported tag %#04x - ignoring\n",
-                    ifd.fTag )
+        return ifd.processUnknownTag( )
     }
     return nil
 }
@@ -82,8 +81,8 @@ const (             // Nikon Type 3 Maker note tags
     _Nikon3ImageAdjustment                   = 0x0080  // _ASCIIString
     _Nikon3ToneCompensation                  = 0x0081  // _ASCIIString
     _Nikon3AuxillaryLens                     = 0x0082  // _ASCIIString
-    _Nikon3LensType                          = 0x0083  // _UnsignedByte
-    _Nikon3LensInfo                          = 0x0084  // 1 _UnsignedRational 
+    _Nikon3LensType                  = 0x0083  // _UnsignedByte
+    _Nikon3LensInfo                  = 0x0084  // 1 _UnsignedRational 
     _Nikon3ManualFocusDistance               = 0x0085  // 1 _SignedByte
     _Nikon3DigitalZoomFactor                 = 0x0086  // 1 _SignedByte
     _Nikon3FlashMode                 = 0x0087  // 1 _UnsignedByte
@@ -544,6 +543,11 @@ var xlat1 = [256]byte {
 0x3b,0x2d,0xeb,0x25,0x49,0xfa,0xa3,0xaa,0x39,0xa7,0xc5,0xa7,0x50,0x11,0x36,0xfb,
 0xc6,0x67,0x4a,0xf5,0xa5,0x12,0x65,0x7e,0xb0,0xdf,0xaf,0x4e,0xb3,0x61,0x7f,0x2f }
 
+// descramble creates a descrambled copy of the received data: it does not modify
+// the original data, which can then be stored. This is appropriate since those
+// data can be preserved or removed but not modified after parsing. If we were to
+// allow modifying the scrambled data we would need a function to re-scramble them
+// after modification. This is doable but not necessary in this version.
 func (ifd *ifdd) descramble( data []byte ) ([]byte, error) {
     serial, ok := ifd.desc.global["serialKey"].(uint32)
     if ! ok {
@@ -742,14 +746,6 @@ func (ifd *ifdd) storeNikon3ImageSize() error {
         fmt.Printf( "%d\n", is[0] )
     }
     return ifd.storeUnsignedLongs( "Compressed Image Size", 1, fis )
-}
-
-func (ifd *ifdd) storeAnyUnknownSilently( ) error {
-    if ifd.fType == _Undefined {
-        return ifd.storeUndefinedAsUnsignedBytes( "", 0, nil )
-    } else {
-        return ifd.storeAnyNonUndefined( "", nil )
-    }
 }
 
 func (ifd *ifdd) storeNikon3ShutterCount() error {
@@ -1192,8 +1188,8 @@ func storeNikon3Tags( ifd *ifdd ) error {
         return ifd.storeNikon3RetouchHistory( )
     case _Nikon3ImageSize:
         return ifd.storeNikon3ImageSize( )
-    case _Nikon30a3:
-        return ifd.storeAnyUnknownSilently( )
+//    case _Nikon30a3:
+//        return ifd.storeAnyUnknownSilently( )
     case _Nikon3ShutterCount:
         return ifd.storeNikon3ShutterCount( )
     case _Nikon3FlashInfo:
@@ -1213,10 +1209,9 @@ func storeNikon3Tags( ifd *ifdd ) error {
     case _Nikon3RetouchInfo:
         return ifd.storeNikon3RetouchInfo( )
     default:
-        fmt.Printf( "storeNikon3Tags: Unsupported tag %#04x - ignoring\n", ifd.fTag )
+        return ifd.processUnknownTag( )
     }
 
-//    panic("Stop")
     return nil
 }
 
@@ -1252,6 +1247,9 @@ const (
 
     _NIKON_MAKER_SIGNATURE_4 = "Nikon\x00\x02\x00\x00\x00"
     _NIKON_MAKER_SIGNATURE_4_SIZE = 10
+
+    _NIKON_TIFF_HEADER = "MM\x00\x2a\x00\x00\x00\x08"
+    _NIKON_TIFF_HEADER_SIZE = 8
 )
 
 func (ifd *ifdd)processNikonMakerNote3( offset uint32 ) error {
@@ -1278,7 +1276,7 @@ func (ifd *ifdd)processNikonMakerNote3( offset uint32 ) error {
     if err != nil {
         return err
     }
-
+    mknd.Control = ifd.desc.Control     // propagate original control
     offset, err = mknd.checkValidTiff( )
     if err != nil {
         return err
@@ -1297,17 +1295,20 @@ func (ifd *ifdd)processNikonMakerNote3( offset uint32 ) error {
         return err
     }
 
-    // transfer EMBEDDED IFD and thumbnail info to the parent ifd desc 
+    // transfer EMBEDDED IFD info to the parent ifd desc 
     ifd.desc.ifds[EMBEDDED] = mknd.ifds[EMBEDDED]
-    ifd.desc.global["thumbType"] = mknd.global["thumbType"]
-    ifd.desc.global["thumbOffset"] = mknd.global["thumbOffset"]
-    ifd.desc.global["thumbLen"] = mknd.global["thumbLen"]
+    // Do not transfer thumbnail (i.e. Nikon Preview) to parent ifd desc
+//    ifd.desc.global["thumbType"] = mknd.global["thumbType"]
+//    ifd.desc.global["thumbOffset"] = mknd.global["thumbOffset"]
+//    ifd.desc.global["thumbLen"] = mknd.global["thumbLen"]
 
     // Note that the ifd end without a next ifd offset
     // TODO: add a parameter to prevent checkIFD to read the next ifd offset?
     mknd.root = nikon
-    // TODO: check the endianess for \x00\x2a
-    ifd.storeValue( ifd.newDescValue( mknd, _NIKON_MAKER_SIGNATURE_3+"MM\x00\x2a" ) )
+    // TODO: check the endianess for \x00\x2a\x00\x00\x00\x08
+    ifd.storeValue( ifd.newDescValue( mknd,
+                _NIKON_MAKER_SIGNATURE_3+_NIKON_TIFF_HEADER,
+                _NIKON_TIFF_HEADER_SIZE ) )
     ifd.desc.ifds[MAKER] = nikon
 
 //    panic( "Debug" )
@@ -1315,7 +1316,6 @@ func (ifd *ifdd)processNikonMakerNote3( offset uint32 ) error {
 }
 
 func tryNikonMakerNote( ifd *ifdd, offset uint32 ) ( func( uint32 ) error ) {
-
     if bytes.Equal( ifd.desc.data[offset:offset+_NIKON_MAKER_SIGNATURE_1_SIZE],
                     []byte( _NIKON_MAKER_SIGNATURE_1 ) ) {
         fmt.Printf("    MakerNote: Nikon type 1\n" )
@@ -1323,7 +1323,7 @@ func tryNikonMakerNote( ifd *ifdd, offset uint32 ) ( func( uint32 ) error ) {
     }
     if bytes.Equal( ifd.desc.data[offset:offset+_NIKON_MAKER_SIGNATURE_3_SIZE],
                     []byte( _NIKON_MAKER_SIGNATURE_3 ) ) {
-        fmt.Printf("    MakerNote: Nikon type 3\n" )
+//        fmt.Printf("    MakerNote: Nikon type 3\n" )
         return ifd.processNikonMakerNote3
     }
     if bytes.Equal( ifd.desc.data[offset:offset+_NIKON_MAKER_SIGNATURE_4_SIZE],
