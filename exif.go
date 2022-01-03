@@ -50,7 +50,7 @@ import (
 const (
     _originOffset = 6           // TIFF header offset in EXIF file
     _headerSize   = 8           // TIFF header size
-    _valOffSize   = 4           // value fits if < 4 bytes, otherwise offset
+    _valOffSize   = 4           // value fits in if <= 4 bytes, otherwise offset
     _IfdEntrySize = ( _ShortSize + _LongSize) * 2
 )
 
@@ -148,11 +148,7 @@ type Desc struct {
     endian  binary.ByteOrder // endianess as defined in binary
 
     global  map[string]interface{}  // storage for global information
-/*
-    tType   Compression     // Thumbnail information if any
-    tOffset uint32          // Thumbnail JPEG SOI offset, if jpeg thumbnail
-    tLen    uint32          // Thumbnail after JPEG EOD, if jpeg thumbnail
-*/
+
             control         // what to do when parsing
 
     root    *ifdd           // tree of ifd for rewriting exif metadata
@@ -206,7 +202,7 @@ func getTiffTString( t tType ) string {
         case _Double: return "Double"
         default: break
     }
-    return "Undefined"
+    return fmt.Sprintf("Unknown (%d)", t )
 }
 
 func (d *Desc) readTIFFData( offset uint32, dest interface{} ) {

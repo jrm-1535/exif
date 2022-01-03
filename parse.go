@@ -729,7 +729,7 @@ func (ifd *ifdd) storeExifCFAPattern( ) error {
         h1 := ((hz & 0xff) << 8) + (hz >> 8)
         v1 := ((vt & 0xff) << 8) + (vt >> 8)
         if ( uint32(h1) * uint32(v1) != ifd.fCount - 4 ) {
-            return fmt.Errorf( "CFAPattern: Invalid repeat patterns(%d,%d)\n", hz, vt )
+            return fmt.Errorf( "CFAPattern: Invalid repeat patterns(%d,%d) @%#08x\n", hz, vt, ifd.sOffset )
         }
         hz, vt = h1, v1
         fmt.Printf("CFAPattern: Warning: incorrect endianess\n")

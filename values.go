@@ -289,16 +289,14 @@ func (dv *descValue)serializeData( w io.Writer ) (err error) {
     fmt.Printf( "%s ifd Serialize in data whole %s ifd @offset %#08x\n",
         dv.ifd.getIfdName(), dv.v.root.getIfdName(), dv.ifd.dOffset )
 
-    _, err = w.Write( []byte( dv.header ) )
+    _, err = w.Write( []byte( dv.header ) ) // including endian+0x002a+0x00000008
     if err != nil {
         return
     }
-//    _, err = dv.v.root.serializeEntries( w, dv.ifd.dOffset + uint32(len(dv.header)) )
     _, err = dv.v.root.serializeEntries( w, dv.origin )
     if err != nil {
         return
     }
-//    _, err = dv.v.root.serializeDataArea( w, dv.ifd.dOffset + uint32(len(dv.header)) )
     _, err = dv.v.root.serializeDataArea( w, dv.origin )
     if err != nil {
         return
@@ -450,7 +448,7 @@ func (ifd *ifdd) newAsciiStringValue( name string, asVal []byte ) (as *unsignedB
     as.name = name
     as.vTag = ifd.fTag
     as.vType = ifd.fType
-    as.vCount = uint32(len(asVal))
+    as.vCount = uint32(len(asVal))  // assuming terminating 0 was included
     as.v = asVal
     as.s = true
     return

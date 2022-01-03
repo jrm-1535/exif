@@ -64,11 +64,11 @@ func (d *Desc)serialize( w io.Writer ) (written int, err error) {
     return
 }
 
-func (ifd *ifdd)setDataAreaStart( offset uint32 ) {
-// TODO: ignore offset as far as alignment is concerned?
+func (ifd *ifdd)setDataAreaStart( origin uint32 ) {
+    // ignore origin as far as alignment is concerned?
     // calculate where data area starts
 
-    ifd.dOffset = offset + ifd.getAlignedDataSize(
+    ifd.dOffset = origin + ifd.getAlignedDataSize(
                             _ShortSize +    // number of IFD entries
                             (uint32(len(ifd.values)) * _IfdEntrySize) +
                             _LongSize )     // next IFD offset
@@ -91,7 +91,6 @@ func (ifd *ifdd)serializeEntries( w io.Writer, offset uint32 ) (uint32, error) {
 //                  _ShortSize +                  // number of IFD entries
 //                  (uint32(len(ifd.values)) * _IfdEntrySize) +
 //                  _LongSize                     // next IFD offset
-
     endian := ifd.desc.endian
     written := uint32(0)
 
@@ -137,9 +136,9 @@ func (ifd *ifdd)serializeEntries( w io.Writer, offset uint32 ) (uint32, error) {
     return written, nil
 }
 
-func (ifd *ifdd)serializeDataArea( w io.Writer, offset uint32 ) (uint32, error) {
-    ifd.setDataAreaStart( offset )
-    offset = ifd.dOffset            // keep start of data area for later use
+func (ifd *ifdd)serializeDataArea( w io.Writer, origin uint32 ) (uint32, error) {
+    ifd.setDataAreaStart( origin )
+    origin = ifd.dOffset            // keep start of data area for later use
 
     // calculate where data area starts
 //    offset += _ShortSize + (uint32(len(ifd.values)) * _IfdEntrySize) + _LongSize
@@ -157,7 +156,15 @@ func (ifd *ifdd)serializeDataArea( w io.Writer, offset uint32 ) (uint32, error) 
 //        fmt.Printf( "ifd %d serialized data for entry %d dOffset %#08x\n", ifd.id, i, ifd.dOffset )
     }
 
-    written := ifd.dOffset - offset
+    written := ifd.dOffset - origin
+
+    debugOff := ifd.getAlignedDataSize( ifd.dOffset -origin )
+    if debugOff != ifd.dOffset - origin {
+        fmt.Printf( "DEBUG: serializeDataArea %s ifd end data offset %#08x actual end data area %#08x\n",
+                    ifd.getIfdName(), debugOff, ifd.dOffset )
+        written += ifd.alignDataArea( w, ifd.dOffset - origin ) // keep data area correctly aligned
+    }
+
     fmt.Printf( "%s ifd serialize data: returning with size %d\n", ifd.getIfdName(), written )
     return written, err
 }
