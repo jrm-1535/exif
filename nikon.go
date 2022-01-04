@@ -1160,8 +1160,8 @@ func storeNikon3Tags( ifd *ifdd ) error {
         return ifd.storeNikon3ISOInfo( )
     case _Nikon3DistortInfo:
         return ifd.storeNikon3DistortInfo( )
-    case _Nikon302c:
-        return ifd.storeUndefinedInfo( "Nikon 0x002c" )
+//    case _Nikon302c:
+//        return ifd.storeUndefinedInfo( "Nikon 0x002c" )
     case _Nikon3LensType:
         return ifd.storeNikon3LensType( )
     case _Nikon3LensInfo:
@@ -1170,8 +1170,8 @@ func storeNikon3Tags( ifd *ifdd ) error {
         return ifd.storeNikon3FlashMode( )
     case _Nikon3ShootingMode:
         return ifd.storeNikon3ShootingMode( )
-    case _Nikon308a:    // 1 _UnsignedShort
-        return ifd.storeUnknownEntry( "Nikon 0x008a" )
+//    case _Nikon308a:    // 1 _UnsignedShort
+//        return ifd.storeUnknownEntry( "Nikon 0x008a" )
     case _Nikon3LensFStops:
         return ifd.storeNikon3UndefinedFraction( "Lens F Stops", 4, "" )
     case _Nikon3ShotInfo:
@@ -1282,12 +1282,20 @@ func (ifd *ifdd)processNikonMakerNote3( offset uint32 ) error {
         return err
     }
 
+
     // collect decryption keys first
+    if mknd.ParsDbg {
+        fmt.Printf( "processNikonMakerNote3: First pass to collect SerialNumber and ShutterCount\n" )
+    }
     _, _, err = mknd.storeIFD( MAKER, offset, preProcessNikon3Tags )
     if err != nil {
         return err
     }
-//    fmt.Printf( "Serial %d count %d\n", mknd.global["serialKey"], mknd.global["countKey"] )
+    if mknd.ParsDbg {
+        fmt.Printf( "processNikonMakerNote3: Serial %d count %d\n",
+                     mknd.global["serialKey"], mknd.global["countKey"] )
+        fmt.Printf( "processNikonMakerNote3: Second pass to process all tags\n")
+    }
     var nikon *ifdd
     _, nikon, err = mknd.storeIFD( MAKER, offset, storeNikon3Tags )
     if err != nil {

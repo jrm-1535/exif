@@ -732,7 +732,9 @@ func (ifd *ifdd) storeExifCFAPattern( ) error {
             return fmt.Errorf( "CFAPattern: Invalid repeat patterns(%d,%d) @%#08x\n", hz, vt, ifd.sOffset )
         }
         hz, vt = h1, v1
-        fmt.Printf("CFAPattern: Warning: incorrect endianess\n")
+        if ifd.desc.Warn {
+            fmt.Printf("CFAPattern: Warning: incorrect endianess\n")
+        }
     }
 
     // current h and v will still be accessible from f
@@ -1176,15 +1178,23 @@ func (d *Desc) storeIFD( id IfdId, start uint32,
     ifd.sOffset = start + _ShortSize
     ifd.values = make( []serializer, 0, nIfdEntries )
 
-//    fmt.Printf( "New IFD ID=%d: n entries %d first entry @ offset %#08x\n",
-//                ifd.id, nIfdEntries, ifd.sOffset )
+    if d.ParsDbg {
+        fmt.Printf( "storeIFD %s IFD (%d): %d entries\n",
+                    ifd.getIfdName(), id, nIfdEntries )
+    }
 
     for i := uint16(0); i < nIfdEntries; i++ {
         ifd.fTag = tTag(d.getUnsignedShort( ifd.sOffset ))
         ifd.fType = tType(d.getUnsignedShort( ifd.sOffset + 2 ))
         ifd.fCount = d.getUnsignedLong( ifd.sOffset + 4 )
-        ifd.sOffset += 8
 
+        if d.ParsDbg {
+            fmt.Printf( "storeIFD %s IFD (%d): entry %d @%#08x: tag %#04x, %d %s\n",
+                        ifd.getIfdName(), id, i, ifd.sOffset, ifd.fTag,
+                        ifd.fCount, getTiffTString( ifd.fType ) )
+        }
+
+        ifd.sOffset += 8
         err := storeTags( ifd )
         if err != nil {
             return 0, nil, fmt.Errorf( "storeIFD: invalid field: %v", err )
@@ -1193,6 +1203,15 @@ func (d *Desc) storeIFD( id IfdId, start uint32,
     }
     d.ifds[id] = ifd                            // store in flat ifd array
     offset := d.getUnsignedLong( ifd.sOffset )  // next IFD offset in list
+    if d.ParsDbg {
+        if offset == 0 {
+            fmt.Printf( "storeIFD %s IFD (%d): no next IFD in list\n",
+                        ifd.getIfdName(), id )
+        } else {
+            fmt.Printf( "storeIFD %s IFD (%d): next ifd @offset %#08x\n",
+                        ifd.getIfdName(), id, offset )
+        }
+    }
     return offset, ifd, nil
 }
 

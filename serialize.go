@@ -63,36 +63,23 @@ func (d *Desc)serialize( w io.Writer ) (written int, err error) {
 }
 
 func (ifd *ifdd)setDataAreaStart( origin uint32 ) {
-    // ignore origin as far as alignment is concerned?
-    // calculate where data area starts
-
-    ifd.dOffset = origin + ifd.getAlignedDataSize(
-                            _ShortSize +    // number of IFD entries
-                            (uint32(len(ifd.values)) * _IfdEntrySize) +
-                            _LongSize )     // next IFD offset
-}
-
-func (ifd *ifdd)alignDataArea( w io.Writer, end uint32 ) uint32 {
-    nOffset := ifd.getAlignedDataSize( end )
-    if nOffset != end {
-        pad := make( []byte, nOffset - end )
-        w.Write( pad )
-        return nOffset - end
+    if origin & 1 == 1 {
+        panic( fmt.Sprintf(
+                "setDataAreaStart: origin is not aligned on 2-byte boundaries: %#08x\n",
+                origin ) )
     }
-    return 0
+    // calculate where data area starts
+     ifd.dOffset = origin + _ShortSize +     // number of IFD entries
+                  (uint32(len(ifd.values)) * _IfdEntrySize) +
+                  _LongSize                 // next IFD offset
 }
 
 func (ifd *ifdd)serializeEntries( w io.Writer, offset uint32 ) (uint32, error) {
     ifd.setDataAreaStart( offset )
-    // calculate where data area starts
-//    ifd.dOffset = offset +                      // from parent ifd (if any)
-//                  _ShortSize +                  // number of IFD entries
-//                  (uint32(len(ifd.values)) * _IfdEntrySize) +
-//                  _LongSize                     // next IFD offset
     endian := ifd.desc.endian
     written := uint32(0)
 
-    if ifd.desc.srlzDbg {
+    if ifd.desc.SrlzDbg {
         fmt.Printf( "%s ifd serialize: %d entries starting @%#08x data Offset %#08x\n",
                     ifd.getIfdName(), len(ifd.values), offset, ifd.dOffset )
     }
@@ -111,45 +98,32 @@ func (ifd *ifdd)serializeEntries( w io.Writer, offset uint32 ) (uint32, error) {
                                ifd.getIfdName(), i, err )
             return written, err
         }
-        if ifd.desc.srlzDbg {
+        if ifd.desc.SrlzDbg {
             fmt.Printf( "%s ifd serialized entry %d dOffset %#08x\n",
                         ifd.getIfdName(), i, ifd.dOffset )
         }
         written += _IfdEntrySize
     }
 
-    nOffset := ifd.getAlignedDataSize( ifd.dOffset )
-    if nOffset != ifd.dOffset {
-        if ifd.desc.srlzDbg {
-            fmt.Printf( "DEBUG: serializeEntry %s ifd end data offset %#08x actual end data area %#08x\n",
-                        ifd.getIfdName(), nOffset, ifd.dOffset )
-        }
-        ifd.dOffset = nOffset
+    nIfdOffset := ifd.dOffset
+    if ifd.next == nil {
+        nIfdOffset = 0
     }
-
-    if ifd.next == nil {      // next IFD follows immediately the current one
-        nOffset = 0
-    }
-    if ifd.desc.srlzDbg {
+    if ifd.desc.SrlzDbg {
         fmt.Printf( "%s ifd serialize: next ifd at offset %#08x\n",
-                    ifd.getIfdName(), nOffset )
+                    ifd.getIfdName(), nIfdOffset )
     }
-    err = binary.Write( w, endian, nOffset )
+    err = binary.Write( w, endian, nIfdOffset )
     if err != nil {
         return written, err
     }
     written += _LongSize
-    written += ifd.alignDataArea( w, written ) // keep data area correctly aligned
     return written, nil
 }
 
 func (ifd *ifdd)serializeDataArea( w io.Writer, origin uint32 ) (uint32, error) {
     ifd.setDataAreaStart( origin )
     origin = ifd.dOffset            // keep start of data area for later use
-
-    // calculate where data area starts
-//    offset += _ShortSize + (uint32(len(ifd.values)) * _IfdEntrySize) + _LongSize
-//    ifd.dOffset = offset
     var err error
 
     // Write variable size values, excluding in-place values
@@ -160,23 +134,14 @@ func (ifd *ifdd)serializeDataArea( w io.Writer, origin uint32 ) (uint32, error) 
                                ifd.getIfdName(), i, err )
             return 0, err
         }
-        if ifd.desc.srlzDbg {
+        if ifd.desc.SrlzDbg {
             fmt.Printf( "ifd %d serialized data for entry %d dOffset %#08x\n",
                         ifd.id, i, ifd.dOffset )
         }
     }
 
     written := ifd.dOffset - origin
-
-    size := ifd.getAlignedDataSize( ifd.dOffset -origin )
-    if size != ifd.dOffset - origin {
-        if ifd.desc.srlzDbg {
-            fmt.Printf( "DEBUG: serializeDataArea %s data area size %#08x actual end data area %#08x\n",
-                        ifd.getIfdName(), size, ifd.dOffset )
-        }
-        written += ifd.alignDataArea( w, ifd.dOffset - origin ) // keep data area correctly aligned
-    }
-    if ifd.desc.srlzDbg {
+    if ifd.desc.SrlzDbg {
         fmt.Printf( "%s ifd serialize data: returning with size %d\n",
                     ifd.getIfdName(), written )
     }
@@ -185,7 +150,6 @@ func (ifd *ifdd)serializeDataArea( w io.Writer, origin uint32 ) (uint32, error) 
 
 func getSliceSize( sl interface{} ) uint32 {
     size := binary.Size( sl )
-//    fmt.Printf("getSliceSize: size = %d\n", size )
     if size == -1 {         // binary does not like strings or some other types
         if v, ok := sl.(string); ok {
             return uint32(len(v))
@@ -196,9 +160,6 @@ func getSliceSize( sl interface{} ) uint32 {
 }
 
 func (ifd *ifdd)getAlignedDataSize( sz uint32 ) uint32 {
-    if ifd.desc.Align4 {    // rount up to 4-byte boundary
-        return ((sz + 3)/4) * 4
-    }
     if sz & 1 == 1 {        // round up to 2-byte boundary
         sz ++
     }
@@ -222,8 +183,10 @@ func (ifd *ifdd)serializeSliceEntry( w io.Writer, eTT tEntry,
         return
     }
     size := getSliceSize( sl )
-//    fmt.Printf( "serializeSliceEntry: tag %#04x type %s count %d size %d\n",
-//                eTT.vTag, getTiffTString(eTT.vType), eTT.vCount, size )
+    if ifd.desc.SrlzDbg {
+        fmt.Printf( "serializeSliceEntry: tag %#04x type %s count %d size %d\n",
+                    eTT.vTag, getTiffTString(eTT.vType), eTT.vCount, size )
+    }
     if size <= _valOffSize {
         if err = binary.Write( w, endian, sl ); err == nil {
             if size != _valOffSize {

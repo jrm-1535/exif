@@ -265,7 +265,7 @@ func (ifd *ifdd) newDescValue( dVal *Desc, header string,
 func (dv *descValue) serializeEntry( w io.Writer ) (err error) {
     sz := dv.v.root.dSize
     if sz == 0 {
-        if dv.ifd.desc.srlzDbg {
+        if dv.ifd.desc.SrlzDbg {
             fmt.Printf( "%s ifd serializeEntry: Get %s ifd size @offset %#08x\n",
                         dv.ifd.getIfdName(), dv.v.root.getIfdName(), dv.ifd.dOffset )
         }
@@ -280,7 +280,7 @@ func (dv *descValue) serializeEntry( w io.Writer ) (err error) {
     }
 
     dv.vCount = sz
-    if dv.ifd.desc.srlzDbg {
+    if dv.ifd.desc.SrlzDbg {
         fmt.Printf( "%s ifd got embedded %s ifd size=%d\n",
                     dv.ifd.getIfdName(), dv.v.root.getIfdName(), sz )
     }
@@ -293,7 +293,7 @@ func (dv *descValue) serializeEntry( w io.Writer ) (err error) {
 }
 
 func (dv *descValue)serializeData( w io.Writer ) (err error) {
-    if dv.ifd.desc.srlzDbg {
+    if dv.ifd.desc.SrlzDbg {
         fmt.Printf( "%s ifd Serialize in data whole %s ifd @offset %#08x\n",
                     dv.ifd.getIfdName(), dv.v.root.getIfdName(), dv.ifd.dOffset )
     }
@@ -338,7 +338,7 @@ func (iv *ifdValue) serializeEntry( w io.Writer ) (err error) {
 
     sz := iv.v.dSize
     if sz == 0 {
-        if iv.ifd.desc.srlzDbg {
+        if iv.ifd.desc.SrlzDbg {
             fmt.Printf( "%s ifd serializeEntry: Get %s ifd size @offset %#08x\n",
                         iv.ifd.getIfdName(), iv.v.getIfdName(), iv.ifd.dOffset )
         }
@@ -351,7 +351,7 @@ func (iv *ifdValue) serializeEntry( w io.Writer ) (err error) {
         sz = iv.v.dOffset   // since we serialized from offset 0
         iv.v.dSize = sz     // save in case serializeEntry is called again
     }
-    if iv.ifd.desc.srlzDbg {
+    if iv.ifd.desc.SrlzDbg {
         fmt.Printf( "%s ifd got embedded %s ifd size=%d\n",
                     iv.ifd.getIfdName(), iv.v.getIfdName(), sz )
     }
@@ -360,7 +360,7 @@ func (iv *ifdValue) serializeEntry( w io.Writer ) (err error) {
     return
 }
 func (iv *ifdValue)serializeData( w io.Writer ) (err error) {
-    if iv.ifd.desc.srlzDbg {
+    if iv.ifd.desc.SrlzDbg {
         fmt.Printf( "%s ifd Serialize in data whole %s ifd @offset %#08x\n",
                     iv.ifd.getIfdName(), iv.v.getIfdName(), iv.ifd.dOffset )
     }

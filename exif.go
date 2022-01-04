@@ -90,21 +90,20 @@ func GetCompressionString( c Compression ) string {
 }
 
 // Control Unknown tag BitMask:
-// 0 => Silently keep tag
-// 1 => Warn and keep tag
-// 2 => Silently remove tag
-// 3 => Warn and remove tag
-// 4,5,6,7 => stop at first unknown tag
+// 0 => Keep unknown tag and metadata
+// 1 => Remove tag and metadata
+// 2 => stop in error at first unknown tag
 const (
-    Warn    = 1
-    Remove  = 2
-    Stop    = 4
+    Keep   = 0
+    Remove = 1
+    Stop   = 2
 )
 
 type Control struct {
     Unknown uint            // how to deal with unknown tags
-    Align4  bool            // align data area on 4-byte boundaries
-    srlzDbg bool            // debug serialize
+    Warn    bool            // turn on warnings (unknown tags & non-fatal errors)
+    ParsDbg bool            // turn on parse debug
+    SrlzDbg bool            // turn on serialize debug
 }
 
 type IfdId  uint
@@ -196,6 +195,7 @@ func getTiffTString( t tType ) string {
         case _UnsignedLong: return "Unsigned long"
         case _UnsignedRational: return "Unsigned rational"
         case _SignedByte: return "Signed byte"
+        case _Undefined: return "Undefined"
         case _SignedShort: return "Signed short"
         case _SignedLong: return "Signed long"
         case _SignedRational: return "Signed rational"
@@ -396,7 +396,7 @@ func (ifd *ifdd) processPadding( ) error {
 }
 
 func (ifd *ifdd) processUnknownTag( ) error {
-    if 0 != ifd.desc.Unknown & Warn {
+    if ifd.desc.Warn {
         fmt.Printf( "%s: unknown or unsupported tag (%#02x) @offset %#04x type %s count %d\n",
                     ifd.getIfdName(), ifd.fTag, ifd.sOffset-8,
                     getTiffTString( ifd.fType ), ifd.fCount )
