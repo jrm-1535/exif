@@ -103,7 +103,8 @@ const (
 
 type Control struct {
     Unknown uint            // how to deal with unknown tags
-    Align4  bool            // extra alignment for exif data area (e.g Nikon)
+    Align4  bool            // align data area on 4-byte boundaries
+    srlzDbg bool            // debug serialize
 }
 
 type IfdId  uint

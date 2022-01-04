@@ -40,15 +40,13 @@ func (d *Desc)serialize( w io.Writer ) (written int, err error) {
     if err != nil {
         return
     }
-//fmt.Printf( "ifd0 entries use %d bytes data area @offset=%d\n", ns, d.root.dOffset )
     written += int(ns)
     ns, err = d.root.serializeDataArea( w, _headerSize )
     if err != nil {
         return
     }
-//fmt.Printf( "ifd0 data area uses %d bytes next offset=%d\n", ns, d.root.dOffset )
     written += int(ns)
-    if d.root.next != nil {    // store thumbnail IFD
+    if d.root.next != nil {    // thumbnail IFD
         offset := d.root.dOffset
         ns, err = d.root.next.serializeEntries( w, offset )
         if err != nil {
@@ -94,9 +92,11 @@ func (ifd *ifdd)serializeEntries( w io.Writer, offset uint32 ) (uint32, error) {
     endian := ifd.desc.endian
     written := uint32(0)
 
+    if ifd.desc.srlzDbg {
+        fmt.Printf( "%s ifd serialize: %d entries starting @%#08x data Offset %#08x\n",
+                    ifd.getIfdName(), len(ifd.values), offset, ifd.dOffset )
+    }
     // write number of entries first as an _UnsignedShort
-    fmt.Printf( "%s ifd serialize: %d entries starting @%#08x data Offset %#08x\n",
-                ifd.getIfdName(), len(ifd.values), offset, ifd.dOffset )
     err := binary.Write( w, endian, uint16(len(ifd.values)) )
     if err != nil {
         return written, err
@@ -107,26 +107,33 @@ func (ifd *ifdd)serializeEntries( w io.Writer, offset uint32 ) (uint32, error) {
     for i := 0; i < len(ifd.values); i++ {
         err = ifd.values[i].serializeEntry( w )
         if err != nil {
-            fmt.Printf("%s ifd serializeEntry %d returned error %v\n",
-                        ifd.getIfdName(), i, err )
+            err = fmt.Errorf( "%s ifd serializeEntry %d: %v\n",
+                               ifd.getIfdName(), i, err )
             return written, err
         }
-        fmt.Printf( "%s ifd serialized entry %d dOffset %#08x\n",
-                    ifd.getIfdName(), i, ifd.dOffset )
+        if ifd.desc.srlzDbg {
+            fmt.Printf( "%s ifd serialized entry %d dOffset %#08x\n",
+                        ifd.getIfdName(), i, ifd.dOffset )
+        }
         written += _IfdEntrySize
     }
 
     nOffset := ifd.getAlignedDataSize( ifd.dOffset )
     if nOffset != ifd.dOffset {
-        fmt.Printf( "####### %s ifd aligned nOffset %#08x actual end of data area %#08x\n",
-                    ifd.getIfdName(), nOffset, ifd.dOffset )
+        if ifd.desc.srlzDbg {
+            fmt.Printf( "DEBUG: serializeEntry %s ifd end data offset %#08x actual end data area %#08x\n",
+                        ifd.getIfdName(), nOffset, ifd.dOffset )
+        }
         ifd.dOffset = nOffset
     }
 
     if ifd.next == nil {      // next IFD follows immediately the current one
         nOffset = 0
     }
-    fmt.Printf( "%s ifd serialize: next ifd at offset %#08x\n", ifd.getIfdName(), nOffset )
+    if ifd.desc.srlzDbg {
+        fmt.Printf( "%s ifd serialize: next ifd at offset %#08x\n",
+                    ifd.getIfdName(), nOffset )
+    }
     err = binary.Write( w, endian, nOffset )
     if err != nil {
         return written, err
@@ -149,23 +156,30 @@ func (ifd *ifdd)serializeDataArea( w io.Writer, origin uint32 ) (uint32, error) 
     for i := 0; i < len(ifd.values); i++ {
         err = ifd.values[i].serializeData( w )
         if err != nil {
-            fmt.Printf("%s ifd serialize data for entry %d returned error %v\n",
-                        ifd.getIfdName(), i, err )
-            break
+            err = fmt.Errorf("%s ifd serializeDataArea for entry %d: %v\n",
+                               ifd.getIfdName(), i, err )
+            return 0, err
         }
-//        fmt.Printf( "ifd %d serialized data for entry %d dOffset %#08x\n", ifd.id, i, ifd.dOffset )
+        if ifd.desc.srlzDbg {
+            fmt.Printf( "ifd %d serialized data for entry %d dOffset %#08x\n",
+                        ifd.id, i, ifd.dOffset )
+        }
     }
 
     written := ifd.dOffset - origin
 
-    debugOff := ifd.getAlignedDataSize( ifd.dOffset -origin )
-    if debugOff != ifd.dOffset - origin {
-        fmt.Printf( "DEBUG: serializeDataArea %s ifd end data offset %#08x actual end data area %#08x\n",
-                    ifd.getIfdName(), debugOff, ifd.dOffset )
+    size := ifd.getAlignedDataSize( ifd.dOffset -origin )
+    if size != ifd.dOffset - origin {
+        if ifd.desc.srlzDbg {
+            fmt.Printf( "DEBUG: serializeDataArea %s data area size %#08x actual end data area %#08x\n",
+                        ifd.getIfdName(), size, ifd.dOffset )
+        }
         written += ifd.alignDataArea( w, ifd.dOffset - origin ) // keep data area correctly aligned
     }
-
-    fmt.Printf( "%s ifd serialize data: returning with size %d\n", ifd.getIfdName(), written )
+    if ifd.desc.srlzDbg {
+        fmt.Printf( "%s ifd serialize data: returning with size %d\n",
+                    ifd.getIfdName(), written )
+    }
     return written, err
 }
 
