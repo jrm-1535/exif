@@ -2,9 +2,9 @@ package exif
 
 import (
     "fmt"
+    "bytes"
     "encoding/binary"
     "io"
-    "os"
     "reflect"
 )
 
@@ -235,10 +235,12 @@ func (ifd *ifdd) checkSignedRationals(
 
 // Common value structure to embed in specific value definition
 type tVal struct {
-    ifd     *ifdd               // parent IFD
-    fpr     func( interface{} ) // value specific print func
-    name    string              // value name
-            tEntry              // common entry structure
+    ifd     *ifdd       // parent IFD
+    fpr     func(
+        io.Writer,
+        interface{} )   // value specific print func
+    name    string      // value name
+            tEntry      // common entry structure
 }
 
 // TIFF Value definitions
@@ -383,7 +385,8 @@ type thumbnailValue struct {
         tVal
     v   []uint8
 }
-func (ifd *ifdd) newThumbnailValue( tag tTag, tbnVal []uint8 ) (tbn *thumbnailValue) {
+func (ifd *ifdd) newThumbnailValue( tag tTag,
+                                    tbnVal []uint8 ) (tbn *thumbnailValue) {
     tbn = new( thumbnailValue )
     tbn.ifd = ifd
     tbn.vTag = tag
@@ -416,8 +419,9 @@ type unsignedByteValue struct {
     v   []uint8
     s   bool        // true if AsciiString (seen as unsigned byte slice)
 }
-func (ifd *ifdd) newUnsignedByteValue( name string, f func( interface{} ),
-                                       ubVal []uint8 ) (ub *unsignedByteValue) {
+func (ifd *ifdd) newUnsignedByteValue(
+                            name string, f func( io.Writer, interface{} ),
+                            ubVal []uint8 ) (ub *unsignedByteValue) {
     ub = new( unsignedByteValue )
     ub.ifd = ifd
     ub.fpr = f
@@ -437,26 +441,28 @@ func (ub *unsignedByteValue)serializeData( w io.Writer ) error {
 }
 func (ub *unsignedByteValue)format( w io.Writer ) {
     if ub.name != "" {
-        fmt.Printf( "  %s:", ub.name )
+        fmt.Fprintf( w, "  %s:", ub.name )
         if ub.fpr == nil {
             if ub.s {
-                fmt.Printf( " %s\n", string(ub.v) )
+                fmt.Fprintf( w, " %s\n",
+                             string(bytes.TrimSuffix(ub.v, []byte{0}) ) )
             } else {
                 for i := 0; i < len(ub.v); i++ {
-                    if i > 0 { io.WriteString( os.Stdout, "," ) }
-                    fmt.Printf( " %d", ub.v[i] )
+                    if i > 0 { io.WriteString( w, "," ) }
+                    fmt.Fprintf( w, " %d", ub.v[i] )
                 }
-                io.WriteString( os.Stdout, "\n" )
+                io.WriteString( w, "\n" )
             }
         } else {
-            io.WriteString( os.Stdout, " " )
-            ub.fpr( ub.v )
+            io.WriteString( w, " " )
+            ub.fpr( w, ub.v )
         }
     }
 }
 
 // treat asciiStringgValue as unsignedByteValue 
-func (ifd *ifdd) newAsciiStringValue( name string, asVal []byte ) (as *unsignedByteValue) {
+func (ifd *ifdd) newAsciiStringValue(
+                        name string, asVal []byte ) (as *unsignedByteValue) {
     as = new( unsignedByteValue )
     as.ifd = ifd
     as.name = name
@@ -472,8 +478,9 @@ type signedByteValue  struct {
         tVal
     v   []int8
 }
-func (ifd *ifdd) newSignedByteValue( name string, f func( interface{} ),
-                                     sbVal []int8 ) (sb *signedByteValue) {
+func (ifd *ifdd) newSignedByteValue(
+                        name string, f func( io.Writer, interface{} ),
+                        sbVal []int8 ) (sb *signedByteValue) {
     sb = new( signedByteValue )
     sb.ifd = ifd
     sb.fpr = f
@@ -492,16 +499,16 @@ func (sb *signedByteValue)serializeData( w io.Writer ) error {
 }
 func (sb *signedByteValue)format( w io.Writer ) {
     if sb.name != "" {
-        fmt.Printf( "  %s:", sb.name )
+        fmt.Fprintf( w, "  %s:", sb.name )
         if sb.fpr == nil {
             for i:= 0; i < len(sb.v); i++ {
-                if i > 0 { io.WriteString( os.Stdout, "," ) }
-                fmt.Printf( " %d", sb.v[i] )
+                if i > 0 { io.WriteString( w, "," ) }
+                fmt.Fprintf( w, " %d", sb.v[i] )
             }
-            io.WriteString( os.Stdout, "\n" )
+            io.WriteString( w, "\n" )
         } else {
-            io.WriteString( os.Stdout, " " )
-            sb.fpr( sb.v )
+            io.WriteString( w, " " )
+            sb.fpr( w, sb.v )
         }
     }
 }
@@ -510,8 +517,9 @@ type unsignedShortValue struct {
         tVal
     v   []uint16
 }
-func (ifd *ifdd) newUnsignedShortValue( name string, f func( interface{} ),
-                                    usVal []uint16 ) (us *unsignedShortValue) {
+func (ifd *ifdd) newUnsignedShortValue(
+                        name string, f func( io.Writer, interface{} ),
+                        usVal []uint16 ) (us *unsignedShortValue) {
     us = new( unsignedShortValue )
     us.ifd = ifd
     us.fpr = f
@@ -530,16 +538,16 @@ func (us *unsignedShortValue)serializeData( w io.Writer ) error {
 }
 func (us *unsignedShortValue)format( w io.Writer ) {
     if us.name != "" {
-        fmt.Printf( "  %s:", us.name )
+        fmt.Fprintf( w, "  %s:", us.name )
         if us.fpr == nil {
             for i:= 0; i < len(us.v); i++ {
-                if i > 0 { io.WriteString( os.Stdout, "," ) }
-                fmt.Printf( " %d", us.v[i] )
+                if i > 0 { io.WriteString( w, "," ) }
+                fmt.Fprintf( w, " %d", us.v[i] )
             }
-            io.WriteString( os.Stdout, "\n" )
+            io.WriteString( w, "\n" )
         } else {
-            io.WriteString( os.Stdout, " " )
-            us.fpr( us.v )
+            io.WriteString( w, " " )
+            us.fpr( w, us.v )
         }
     }
 }
@@ -548,8 +556,9 @@ type signedShortValue struct {
         tVal
     v   []int16
 }
-func (ifd *ifdd) newSignedShortValue( name string, f func( interface{} ),
-                                      ssVal []int16 ) (ss *signedShortValue) {
+func (ifd *ifdd) newSignedShortValue(
+                        name string, f func( io.Writer, interface{} ),
+                        ssVal []int16 ) (ss *signedShortValue) {
     ss = new( signedShortValue )
     ss.ifd = ifd
     ss.fpr = f
@@ -568,17 +577,17 @@ func (ss *signedShortValue)serializeData( w io.Writer ) error {
 }
 func (ss *signedShortValue)format( w io.Writer ) {
     if ss.name != "" {
-        fmt.Printf( "  %s:", ss.name )
+        fmt.Fprintf( w, "  %s:", ss.name )
         if ss.fpr == nil {
             i := 0
             for ; i < len(ss.v); i++ {
-                if i > 0 { io.WriteString( os.Stdout, "," ) }
-                fmt.Printf( " %d", ss.v[i] )
+                if i > 0 { io.WriteString( w, "," ) }
+                fmt.Fprintf( w, " %d", ss.v[i] )
             }
-            io.WriteString( os.Stdout, "\n" )
+            io.WriteString( w, "\n" )
         } else {
-            io.WriteString( os.Stdout, " " )
-            ss.fpr( ss.v )
+            io.WriteString( w, " " )
+            ss.fpr( w, ss.v )
         }
     }
 }
@@ -587,8 +596,9 @@ type unsignedLongValue struct {
         tVal
     v   []uint32
 }
-func (ifd *ifdd) newUnsignedLongValue( name string, f func( interface{} ),
-                                     ulVal []uint32 ) (ul *unsignedLongValue) {
+func (ifd *ifdd) newUnsignedLongValue(
+                            name string, f func( io.Writer, interface{} ),
+                            ulVal []uint32 ) (ul *unsignedLongValue) {
     ul = new( unsignedLongValue )
     ul.ifd = ifd
     ul.fpr = f
@@ -607,16 +617,16 @@ func (ul *unsignedLongValue)serializeData( w io.Writer ) error {
 }
 func (ul *unsignedLongValue)format( w io.Writer ) {
     if ul.name != "" {
-        fmt.Printf( "  %s:", ul.name )
+        fmt.Fprintf( w, "  %s:", ul.name )
         if ul.fpr == nil {
             for i := 0; i < len(ul.v); i++ {
-                if i > 0 { io.WriteString( os.Stdout, "," ) }
-                fmt.Printf( " %d", ul.v[i] )
+                if i > 0 { io.WriteString( w, "," ) }
+                fmt.Fprintf( w, " %d", ul.v[i] )
             }
-            io.WriteString( os.Stdout, "\n" )
+            io.WriteString( w, "\n" )
         } else {
-            io.WriteString( os.Stdout, " " )
-            ul.fpr( ul.v )
+            io.WriteString( w, " " )
+            ul.fpr( w, ul.v )
         }
     }
 }
@@ -625,8 +635,9 @@ type signedLongValue struct {
         tVal
     v   []int32
 }
-func (ifd *ifdd) newSignedLongValue( name string, f func( interface{} ),
-                                     slVal []int32 ) (sl *signedLongValue) {
+func (ifd *ifdd) newSignedLongValue(
+                            name string, f func( io.Writer, interface{} ),
+                            slVal []int32 ) (sl *signedLongValue) {
     sl = new( signedLongValue )
     sl.ifd = ifd
     sl.fpr = f
@@ -644,16 +655,16 @@ func (sl *signedLongValue)serializeData( w io.Writer ) error {
 }
 func (sl *signedLongValue)format( w io.Writer ) {
     if sl.name != "" {
-        fmt.Printf( "  %s:", sl.name )
+        fmt.Fprintf( w, "  %s:", sl.name )
         if sl.fpr == nil {
             for i:= 0; i < len(sl.v); i++ {
-                if i > 0 { io.WriteString( os.Stdout, "," ) }
-                fmt.Printf( " %d", sl.v[i] )
+                if i > 0 { io.WriteString( w, "," ) }
+                fmt.Fprintf( w, " %d", sl.v[i] )
             }
-            io.WriteString( os.Stdout, "\n" )
+            io.WriteString( w, "\n" )
         } else {
-            io.WriteString( os.Stdout, " " )
-            sl.fpr( sl.v )
+            io.WriteString( w, " " )
+            sl.fpr( w, sl.v )
         }
     }
 }
@@ -663,7 +674,7 @@ type unsignedRationalValue struct {
     v  []unsignedRational
 }
 func (ifd *ifdd) newUnsignedRationalValue(
-                    name string, f func( interface{} ),
+                    name string, f func( io.Writer, interface{} ),
                     urVal []unsignedRational ) (ur *unsignedRationalValue) {
     ur = new( unsignedRationalValue )
     ur.ifd = ifd
@@ -683,18 +694,18 @@ func (ur *unsignedRationalValue)serializeData( w io.Writer ) error {
 }
 func (ur *unsignedRationalValue)format( w io.Writer ) {
     if ur.name != "" {
-        fmt.Printf( "  %s:", ur.name )
+        fmt.Fprintf( w, "  %s:", ur.name )
         if ur.fpr == nil {
             for i := 0; i < len(ur.v); i++ {
-                if i > 0 { io.WriteString( os.Stdout, "," ) }
-                fmt.Printf( " %f (%d/%d)",
+                if i > 0 { io.WriteString( w, "," ) }
+                fmt.Fprintf( w, " %f (%d/%d)",
                         float32(ur.v[i].Numerator)/float32(ur.v[i].Denominator),
                         ur.v[i].Numerator, ur.v[i].Denominator )
             }
-            io.WriteString( os.Stdout, "\n" )
+            io.WriteString( w, "\n" )
         } else {
-            io.WriteString( os.Stdout, " " )
-            ur.fpr( ur.v )
+            io.WriteString( w, " " )
+            ur.fpr( w, ur.v )
         }
     }
 }
@@ -704,7 +715,7 @@ type signedRationalValue struct {
     v   []signedRational
 }
 func (ifd *ifdd) newSignedRationalValue(
-                        name string, f func( interface{} ),
+                        name string, f func( io.Writer, interface{} ),
                         srVal []signedRational ) (sr *signedRationalValue) {
     sr = new( signedRationalValue )
     sr.ifd = ifd
@@ -724,18 +735,18 @@ func (sr *signedRationalValue)serializeData( w io.Writer ) error {
 }
 func (sr *signedRationalValue)format( w io.Writer ) {
     if sr.name != "" {
-        fmt.Printf( "  %s:", sr.name )
+        fmt.Fprintf( w, "  %s:", sr.name )
         if sr.fpr == nil {
             for i := 0; i < len(sr.v); i++ {
-                if i > 0 { io.WriteString( os.Stdout, "," ) }
-                fmt.Printf( " %f (%d/%d)",
+                if i > 0 { io.WriteString( w, "," ) }
+                fmt.Fprintf( w, " %f (%d/%d)",
                         float32(sr.v[i].Numerator)/float32(sr.v[i].Denominator),
                         sr.v[i].Numerator, sr.v[i].Denominator )
             }
-            io.WriteString( os.Stdout, "\n" )
+            io.WriteString( w, "\n" )
         } else {
-            io.WriteString( os.Stdout, " " )
-            sr.fpr( sr.v )
+            io.WriteString( w, " " )
+            sr.fpr( w, sr.v )
         }
     }
 }
@@ -750,9 +761,9 @@ func (ifd *ifdd) storeValue( value serializer ) {
         panic("storeValue called with nil value\n")
     }
     if reflect.ValueOf(value).IsNil() {
-        fmt.Printf( "storeValue called with a nil dynamic value (dynamic type %s)\n",
+        msg := fmt.Sprintf( "storeValue called with a nil dynamic value (dynamic type %s)\n",
                     reflect.TypeOf(value).String() )
-        panic("Stop")
+        panic(msg)
     }
     ifd.values = ifd.values[:i+1]         // extend slice within capacity
 //    fmt.Printf("storeValue: cap=%d len=%d i=%d\n", cap(ifd.values), len(ifd.values), i )
@@ -781,7 +792,7 @@ func (ifd *ifdd) storeEmbeddedIfd( name string, id IfdId,
 }
 
 func (ifd *ifdd) storeUnsignedBytes( name string, count uint32,
-                                     p func(v interface{}) ) error {
+                                     p func( io.Writer, interface{}) ) error {
     values, err := ifd.checkUnsignedBytes( count )
     if err == nil {
         ifd.storeValue( ifd.newUnsignedByteValue( name, p, values ) )
@@ -790,7 +801,7 @@ func (ifd *ifdd) storeUnsignedBytes( name string, count uint32,
 }
 
 func (ifd *ifdd) storeSignedBytes( name string, count uint32,
-                                     p func(v interface{}) ) error {
+                                   p func( io.Writer, interface{}) ) error {
     values, err := ifd.checkSignedBytes( count )
     if err == nil {
         ifd.storeValue( ifd.newSignedByteValue( name, p, values ) )
@@ -798,8 +809,9 @@ func (ifd *ifdd) storeSignedBytes( name string, count uint32,
     return err
 }
 
-func (ifd *ifdd) storeUndefinedAsUnsignedBytes( name string, count uint32,
-                                                p func(v interface{}) ) error {
+func (ifd *ifdd) storeUndefinedAsUnsignedBytes(
+                                    name string, count uint32,
+                                    p func( io.Writer, interface{}) ) error {
     if ifd.fType != _Undefined {
         return fmt.Errorf( "%s: incorrect type (%s)\n",
                            name, getTiffTString( ifd.fType ) )
@@ -811,8 +823,9 @@ func (ifd *ifdd) storeUndefinedAsUnsignedBytes( name string, count uint32,
     return nil
 }
 
-func (ifd *ifdd) storeUndefinedAsSignedBytes( name string, count uint32,
-                                              p func(v interface{}) ) error {
+func (ifd *ifdd) storeUndefinedAsSignedBytes(
+                                    name string, count uint32,
+                                    p func( io.Writer, interface{}) ) error {
     if ifd.fType != _Undefined {
         return fmt.Errorf( "%s: incorrect type (%s)\n",
                            name, getTiffTString( ifd.fType ) )
@@ -834,7 +847,7 @@ func (ifd *ifdd) storeAsciiString( name string ) error {
 }
 
 func (ifd *ifdd) storeUnsignedShorts( name string, count uint32,
-                                      p func(v interface{}) ) error {
+                                      p func( io.Writer, interface{}) ) error {
     values, err := ifd.checkUnsignedShorts( count )
     if err == nil {
         ifd.storeValue( ifd.newUnsignedShortValue( name, p, values ) )
@@ -843,7 +856,7 @@ func (ifd *ifdd) storeUnsignedShorts( name string, count uint32,
 }
 
 func (ifd *ifdd) storeSignedShorts( name string, count uint32,
-                                    p func(v interface{}) ) error {
+                                    p func( io.Writer, interface{}) ) error {
     values, err := ifd.checkSignedShorts( count )
     if err == nil {
         ifd.storeValue( ifd.newSignedShortValue( name, p, values ) )
@@ -851,8 +864,9 @@ func (ifd *ifdd) storeSignedShorts( name string, count uint32,
     return err
 }
 
-func (ifd *ifdd) storeUndefinedAsSignedShorts( name string, count uint32,
-                                          print func(v interface{}) ) error {
+func (ifd *ifdd) storeUndefinedAsSignedShorts(
+                                name string, count uint32,
+                                print func(io.Writer, interface{}) ) error {
     if ifd.fType != _Undefined {
         return fmt.Errorf( "%s: incorrect type (%s)\n",
                            name, getTiffTString( ifd.fType ) )
@@ -866,7 +880,7 @@ func (ifd *ifdd) storeUndefinedAsSignedShorts( name string, count uint32,
 }
 
 func (ifd *ifdd) storeUnsignedLongs( name string, count uint32,
-                                     p func(v interface{}) ) error {
+                                     p func( io.Writer, interface{}) ) error {
     values, err := ifd.checkUnsignedLongs( count )
     if err == nil {
         ifd.storeValue( ifd.newUnsignedLongValue( name, p, values ) )
@@ -875,7 +889,7 @@ func (ifd *ifdd) storeUnsignedLongs( name string, count uint32,
 }
 
 func (ifd *ifdd) storeSignedLongs( name string, count uint32,
-                                     p func(v interface{}) ) error {
+                                   p func( io.Writer, interface{}) ) error {
     values, err := ifd.checkSignedLongs( count )
     if err == nil {
         ifd.storeValue( ifd.newSignedLongValue( name, p, values ) )
@@ -883,8 +897,9 @@ func (ifd *ifdd) storeSignedLongs( name string, count uint32,
     return err
 }
 
-func (ifd *ifdd) storeUnsignedRationals( name string, count uint32,
-                                        p func(v interface{}) ) error {
+func (ifd *ifdd) storeUnsignedRationals(
+                                    name string, count uint32,
+                                    p func( io.Writer, interface{}) ) error {
     values, err := ifd.checkUnsignedRationals( count )
     if err == nil {
         ifd.storeValue( ifd.newUnsignedRationalValue( name, p, values ) )
@@ -892,8 +907,9 @@ func (ifd *ifdd) storeUnsignedRationals( name string, count uint32,
     return err
 }
 
-func (ifd *ifdd) storeSignedRationals( name string, count uint32,
-                                       p func(v interface{}) ) error {
+func (ifd *ifdd) storeSignedRationals(
+                                    name string, count uint32,
+                                    p func( io.Writer, interface{}) ) error {
     values, err := ifd.checkSignedRationals( count )
     if err == nil {
         ifd.storeValue( ifd.newSignedRationalValue( name, p, values ) )
@@ -903,8 +919,9 @@ func (ifd *ifdd) storeSignedRationals( name string, count uint32,
 
 // Store as read from the ifd entry fType and fCount, as long as fType is not
 // _Undefined, which would not allow to know the data size.
-func (ifd *ifdd) storeAnyNonUndefined( name string,
-                                       p func(v interface{}) ) error {
+func (ifd *ifdd) storeAnyNonUndefined(
+                                    name string,
+                                    p func( io.Writer, interface{}) ) error {
     switch ifd.fType {
     case _UnsignedByte:     return ifd.storeUnsignedBytes( name, ifd.fCount, p )
     case _ASCIIString:      return ifd.storeAsciiString( name )

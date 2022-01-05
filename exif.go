@@ -411,10 +411,10 @@ func (ifd *ifdd) processUnknownTag( ) error {
     return nil
 }
 
-func dumpData( header string, indent string, data []byte ) {
-    fmt.Printf( "%s:\n", header )
+func dumpData(w io.Writer,  header string, indent string, data []byte ) {
+    fmt.Fprintf( w, "%s:\n", header )
     for i := 0; i < len(data); i += 16 {
-        fmt.Printf("%s%#04x: ", indent, i );
+        fmt.Fprintf( w, "%s%#04x: ", indent, i );
         l := 16
         if len(data)-i < 16 {
             l = len(data)-i
@@ -427,12 +427,13 @@ func dumpData( header string, indent string, data []byte ) {
             } else {
                 b.WriteByte( data[i+j] )
             }
-            fmt.Printf( "%02x ", data[i+j] )
+            fmt.Fprintf( w, "%02x ", data[i+j] )
         }
         for ; j < 16; j++ {
-            fmt.Printf( "   " )
+            io.WriteString( w, "   " )
+//            fmt.Fprintf( w, "   " )
         }
-        fmt.Printf( "%s\n", b.String() )
+        fmt.Fprintf( w, "%s\n", b.String() )
     }
 }
 
@@ -624,7 +625,9 @@ func (d *Desc)Format( w io.Writer, ifdIds []IfdId ) error {
                 fmt.Fprintf( w, "--- %s IFD (id %d)\n", ifdNames[id], id )
                 ifd.format( w )
             } else {
-                fmt.Fprintf( w, "--- %s IFD (id %d) is absent\n", ifdNames[id], id )
+                if d.Warn {
+                    fmt.Fprintf( w, "--- %s IFD (id %d) is absent\n", ifdNames[id], id )
+                }
             }
         }
     }
