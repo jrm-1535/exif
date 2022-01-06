@@ -21,9 +21,9 @@ func checkNikon3Preview( ifd *ifdd ) error {
     case _Compression:
         return ifd.storeTiffCompression( )
     case _XResolution:
-        return ifd.storeUnsignedRationals( "XResolution", 1, nil )
+        return ifd.store1Fraction1Decimal( "XResolution" )
     case _YResolution:
-        return ifd.storeUnsignedRationals( "YResolution", 1, nil )
+        return ifd.store1Fraction1Decimal( "YResolution" )
     case _ResolutionUnit:
         return ifd.storeTiffResolutionUnit( )
     case _JPEGInterchangeFormat:
@@ -143,13 +143,13 @@ func (ifd *ifdd)storeNikon3Version( ) error {
 }
 
 func (ifd *ifdd) storeNikon3ISOSpeed( name string ) error {
-    fnis := func ( w io.Writer, v interface{} ) {
+    fnis := func ( w io.Writer, v interface{}, indent string ) {
         is := v.([]uint16)
         var hi string
         if is[0] == 1 {
             hi = " (Hi ISO mode)"
         }
-        fmt.Fprintf( w, "%d%s\n", is[1], hi )
+        fmt.Fprintf( w, "%d%s", is[1], hi )
     }
     return ifd.storeUnsignedShorts( name, 2, fnis )
 }
@@ -159,13 +159,13 @@ func (ifd *ifdd) storeNikon3UndefinedFraction( name string, count uint32,
     if count < 3 {
         panic("storeNikon3UndefinedFraction: too few bytes\n")
     }
-    ff := func( w io.Writer, v interface{} ) {
+    ff := func( w io.Writer, v interface{}, indent string ) {
         f := v.([]int8)
 //        fmt.Printf( "%d, %d, %d, %d\n", f[0], f[1], f[2], f[3] )
         if f[2] == 0 {
-            fmt.Fprintf( w, "0%s\n", suffix )
+            fmt.Fprintf( w, "0%s", suffix )
         } else {
-            fmt.Fprintf( w, "%f%s\n",
+            fmt.Fprintf( w, "%f%s",
                         float32(f[0]) * (float32(f[1])/float32(f[2])),
                         suffix )
         }
@@ -174,9 +174,9 @@ func (ifd *ifdd) storeNikon3UndefinedFraction( name string, count uint32,
 }
 
 func (ifd *ifdd) storeNikon3ImageBoundary( ) error {
-    fib := func( w io.Writer, v interface{} ) {
+    fib := func( w io.Writer, v interface{}, indent string ) {
         ib := v.([]uint16)
-        fmt.Fprintf( w, "top-left: %d,%d bottom-right %d,%d\n",
+        fmt.Fprintf( w, "top-left: %d,%d bottom-right %d,%d",
                     ib[0], ib[1], ib[2], ib[3] )
     }
     return ifd.storeUnsignedShorts( "Image Boundary", 4, fib )
@@ -190,23 +190,23 @@ var cropCodes = [...]string{
             "", "1:1 Crop" }
 
 func (ifd *ifdd) storeNikon3CropHiSpeed( ) error {
-    fchs := func( w io.Writer, v interface{} ) {
+    fchs := func( w io.Writer, v interface{}, indent string ) {
         chs := v.([]uint16)
         if chs[0] < 18 {
             code := cropCodes[chs[0]]
             if code != "" {
-                fmt.Fprintf( w, "%s\n", code )
+                fmt.Fprintf( w, "%s", code )
                 return
             }
         }
-        fmt.Fprintf( w, "%dx%d cropped to %dx%d at pixel %d,%d\n",
+        fmt.Fprintf( w, "%dx%d cropped to %dx%d at pixel %d,%d",
                     chs[0], chs[1], chs[2], chs[3], chs[4], chs[5], chs[6] )
     }
     return ifd.storeUnsignedShorts( "Crop High Speed", 7, fchs )
 }
 
 func (ifd *ifdd) storeNikon3ColorSpace( ) error {
-    fcs := func( w io.Writer, v interface{} ) {
+    fcs := func( w io.Writer, v interface{}, indent string ) {
         cs := v.([]uint16)
         var csString string
         switch cs[0] {
@@ -214,13 +214,13 @@ func (ifd *ifdd) storeNikon3ColorSpace( ) error {
         case 2:     csString = "Adobe RGB"
         default:    csString = "Unknown"
         }
-        fmt.Fprintf( w, "%s\n", csString )
+        io.WriteString( w, csString )
     }
     return ifd.storeUnsignedShorts( "Color Space", 1, fcs )
 }
 
 func (ifd *ifdd) storeNikon3VRInfo( ) error {
-    fvr := func( w io.Writer, v interface{} ) {
+    fvr := func( w io.Writer, v interface{}, indent string ) {
         cs := v.([]uint8)
         version := string(cs[0:4])
         var state string
@@ -237,13 +237,13 @@ func (ifd *ifdd) storeNikon3VRInfo( ) error {
         case 3: mode = "sport"
         default: mode = "undefined"
         }
-        fmt.Fprintf( w, "%s Version %s Mode %s\n", state, version, mode )
+        fmt.Fprintf( w, "%s Version %s Mode %s", state, version, mode )
     }
     return ifd.storeUndefinedAsUnsignedBytes( "Vibration Reduction", 8, fvr )
 }
 
 func (ifd *ifdd) storeNikon3ActiveSLighting( ) error {
-    fal := func( w io.Writer, v interface{} ) {
+    fal := func( w io.Writer, v interface{}, indent string ) {
         al := v.([]uint16)
         var als string
         switch al[0] {
@@ -259,15 +259,15 @@ func (ifd *ifdd) storeNikon3ActiveSLighting( ) error {
         case 0xffff: als = "Auto"
         default: als = "undefined"
         }
-        fmt.Fprintf( w, "%s\n", als )
+        io.WriteString( w, als )
     }
     return ifd.storeUnsignedShorts( "Active D-Lighting", 1, fal )
 }
 
 func (ifd *ifdd) storeNikon3PictureControlData( ) error {
-    fpcd := func( w io.Writer, v interface{} ) {
+    fpcd := func( w io.Writer, v interface{}, indent string ) {
         pcd := v.([]uint8)
-//        dumpData( w, "Picture Control Data", "     ", pcd )
+//        dumpData( w, "Picture Control Data", "     ", false, pcd )
         var version = string(pcd[0:4])
         var name = string(bytes.TrimRight( pcd[4:24], "\x00" ) )
 //        var base = string(pcd[24:44])
@@ -277,8 +277,8 @@ func (ifd *ifdd) storeNikon3PictureControlData( ) error {
         case 1: adjust = "Quick Adjust"
         case 3: adjust = "Full Control"
         }
-        fmt.Fprintf( w, "Version %s %s %s\n", version, name, adjust )
-
+        fmt.Fprintf( w, "Version %s %s %s", version, name, adjust )
+        indent = "\n" + indent
         ppcv := func( w io.Writer, name string, v int,
                       norm string, fs string, div float32 ) {
             var t string
@@ -290,24 +290,24 @@ func (ifd *ifdd) storeNikon3PictureControlData( ) error {
             case -128:
                 t = "Auto"
             default:
-                fmt.Fprintf( w, "                       %s: ", name )
+                fmt.Fprintf( w, "%s%s: ", indent, name )
                 fmt.Fprintf( w, fs, float32(v)/div)
                 return
             }
-            fmt.Fprintf( w, "                       %s: %s\n", name, t )
+            fmt.Fprintf( w, "%s%s: %s", indent, name, t )
         }
 
-        ppcv( w, " Quick Adjust", int(pcd[49]-0x80), "Normal", "%d\n", 1 )
-        ppcv( w, " Sharpness", int(pcd[51]-0x80), "None", "%.2f\n", 4 )
-        ppcv( w, " Clarity", int(pcd[53]-0x80), "None", "%.2f\n", 4 )
-        ppcv( w, " Contrast", int(pcd[55]-0x80), "None", "%.2f\n", 4 )
-        ppcv( w, " Brightness", int(pcd[57]-0x80), "None", "%.2f", 4 )
+        ppcv( w, "Quick Adjust", int(pcd[49]-0x80), "Normal", "%d", 1 )
+        ppcv( w, "Sharpness", int(pcd[51]-0x80), "None", "%.2f", 4 )
+        ppcv( w, "Clarity", int(pcd[53]-0x80), "None", "%.2f", 4 )
+        ppcv( w, "Contrast", int(pcd[55]-0x80), "None", "%.2f", 4 )
+        ppcv( w, "Brightness", int(pcd[57]-0x80), "None", "%.2f", 4 )
     }
     return ifd.storeUndefinedAsUnsignedBytes( "Picture Control Data", 0, fpcd )
 }
 
 func (ifd *ifdd) storeNikon3WorldTime( ) error {
-    fwt := func( w io.Writer, v interface{} ) {
+    fwt := func( w io.Writer, v interface{}, indent string ) {
         wt := v.([]uint8)
         tz := int16(ifd.desc.endian.Uint16( wt ))
         var sign string
@@ -318,16 +318,16 @@ func (ifd *ifdd) storeNikon3WorldTime( ) error {
             sign = "+"
         }
         hours := tz / 60
-        fmt.Fprintf( w, "Time zone %s%dH", sign, hours )
+        fmt.Fprintf( w, "Time zone %s%dH ", sign, hours )
         minutes := tz - (hours * 60)
         if minutes != 0 {
-            fmt.Fprintf( w, " %02d M", minutes)
+            fmt.Fprintf( w, "%02d M ", minutes)
         }
         var dls string
         switch wt[2] {
-        case 0: dls = "No"
-        case 1: dls = "Yes"
-        default: dls = "Undefined"
+        case 0:  dls = "\n"
+        case 1:  dls = "Daylight savings\n"
+        default: dls = "Daylight savings Undefined\n"
         }
         var df string
         switch wt[3] {
@@ -336,15 +336,18 @@ func (ifd *ifdd) storeNikon3WorldTime( ) error {
         case 2: df = "D/M/Y"
         default: df = "Undefined"
         }
-        fmt.Fprintf( w, " Daylight savings %s, Date format %s\n", dls, df )
+        io.WriteString( w, dls )
+        io.WriteString( w, indent )
+        io.WriteString( w, "Date format: ")
+        io.WriteString( w, df )
     }
     return ifd.storeUndefinedAsUnsignedBytes( "World Time", 4, fwt )
 }
 
 func (ifd *ifdd) storeNikon3ISOInfo( ) error {
-    fiso := func( w io.Writer, v interface{} ) {
+    fiso := func( w io.Writer, v interface{}, indent string ) {
         iso := v.([]uint8)
-//        dumpData( w, "ISO", "     ", iso )
+//        dumpData( w, "ISO", "     ", false, iso )
         val := 100  * (1 << ((uint16(iso[0])/12)-5))
         var isoex string
         exp := int16(ifd.desc.endian.Uint16( iso[4:] ))
@@ -395,16 +398,16 @@ func (ifd *ifdd) storeNikon3ISOInfo( ) error {
         case 0x204: isoex2 = "Lo 1.0"
         default: isoex2 = "Undefined"
         }
-        fmt.Fprintf( w, "%d expansion %s iso2 %d expansion %s\n",
+        fmt.Fprintf( w, "%d expansion %s iso2 %d expansion %s",
                      val, isoex, v2, isoex2 )
     }
     return ifd.storeUndefinedAsUnsignedBytes( "ISO Info", 14, fiso )
 }
 
 func (ifd *ifdd) storeNikon3DistortInfo( ) error {
-    fdi := func( w io.Writer, v interface{} ) {
+    fdi := func( w io.Writer, v interface{}, indent string ) {
         di := v.([]uint8)
-//        dumpData( w, "Distortion", "     ", di )
+//        dumpData( w, "Distortion", "     ", false, di )
         version := string(di[:4])
         var control string
         switch di[4] {
@@ -412,17 +415,9 @@ func (ifd *ifdd) storeNikon3DistortInfo( ) error {
         case 1: control = "On"
         case 2: control = "On (underwater)"
         }
-        fmt.Fprintf( w, "%s version %s\n", control, version )
+        fmt.Fprintf( w, "version %s: %s", version, control )
     }
     return ifd.storeUndefinedAsUnsignedBytes( "Distortion information", 16, fdi )
-}
-
-func (ifd *ifdd) storeUndefinedInfo( name string ) error {
-    fu := func( w io.Writer, v interface{} ) {
-        d := v.([]uint8)
-        dumpData( w, "Unknown - Raw data", "     ", d )
-    }
-    return ifd.storeUndefinedAsUnsignedBytes( name, 0, fu )
 }
 
 func makeStringFromBits( v uint16, sa[]string ) string {
@@ -436,27 +431,27 @@ func makeStringFromBits( v uint16, sa[]string ) string {
 }
 
 func (ifd *ifdd) storeNikon3LensType( ) error {
-    flt := func( w io.Writer, v interface{} ) {
+    flt := func( w io.Writer, v interface{}, indent string ) {
         lt := v.([]uint8)
         s := makeStringFromBits( uint16(lt[0]),
                                  []string{ "MF ", "D ", "G ", "VR ", 
                                            "1 ", "FT-1 ", "E ", "AF-P " } )
-        fmt.Fprintf( w, "%s\n", s )
+        fmt.Fprintf( w, "%s", s )
     }
     return ifd.storeUnsignedBytes( "Lens Type", 1, flt )
 }
 
 func (ifd *ifdd) storeNikon3LensInfo( ) error {
-    fli := func( w io.Writer, v interface{} ) {
+    fli := func( w io.Writer, v interface{}, indent string ) {
         li := v.([]unsignedRational)
-        fmt.Fprintf( w, "Hex %v\n", li )
-
+// TODO
+        fmt.Fprintf( w, "Hex %v", li )
     }
     return ifd.storeUnsignedRationals( "Lens Info", 4, fli )
 }
 
 func (ifd *ifdd) storeNikon3FlashMode() error {
-    ffm := func( w io.Writer, v interface{} ) {
+    ffm := func( w io.Writer, v interface{}, indent string ) {
         fm := v.([]uint8)
         var m string
         switch fm[0] {
@@ -469,19 +464,19 @@ func (ifd *ifdd) storeNikon3FlashMode() error {
         case 18: m = "LED Light"
         default: m = "Unknown"
         }
-        fmt.Fprintf( w, "%s\n", m )
+        io.WriteString( w, m )
     }
     return ifd.storeUnsignedBytes( "Flash Mode", 1, ffm )
 }
 
 func (ifd *ifdd) storeNikon3ShootingMode() error {
-    fsm := func( w io.Writer, v interface{} ) {
+    fsm := func( w io.Writer, v interface{}, indent string ) {
         sm := v.([]uint16)
         //fmt.Printf( "%#04x\n", sm[0] )
         var sf string
         if sm[0] & 0x87 == 0 {
             if sm[0] == 0 {
-                fmt.Fprintf( w, "Single-Frame\n" )
+                fmt.Fprintf( w, "Single-Frame" )
                 return
             }
             sf = "Single-Frame "
@@ -491,17 +486,9 @@ func (ifd *ifdd) storeNikon3ShootingMode() error {
                           "Self-timer ", "Exposure Bracketing ", "Auto ISO ",
                           "white-Balance Bracketing ", "IR Control",
                           "D-Lighting Braketing" } )
-        fmt.Fprintf( w, "%s%s\n", sf, s )
+        fmt.Fprintf( w, "%s%s", sf, s )
     }
     return ifd.storeUnsignedShorts( "Shooting Mode", 1, fsm )
-}
-
-func (ifd *ifdd) storeUnknownEntry( name string ) error {
-    fu := func( w io.Writer, v interface{} ) {
-//        u := v.([]uint8)
-        fmt.Fprintf( w, "Unknown %v\n", v )
-    }
-    return ifd.storeAnyNonUndefined( name, fu )
 }
 
 var xlat0 = [256]byte {
@@ -578,23 +565,23 @@ func (ifd *ifdd) descramble( data []byte ) ([]byte, error) {
 }
 
 func (ifd *ifdd) storeNikon3ShotInfo( ) error {
-    fu := func( w io.Writer, v interface{} ) {
+    fu := func( w io.Writer, v interface{}, indent string ) {
         d := v.([]uint8)
         if string(d[0:4]) == "0215" && len(d) == 6745 {
             dsc, err := ifd.descramble( d[4:0x39a-4] )
             if err == nil {
-                fmt.Fprintf( w, "Version: %s (%s) Firmware: %s\n",
+                fmt.Fprintf( w, "Version: %s (%s) Firmware: %s",
                         string(d[0:4]), "D5000", string(dsc[0:5]) )
                 return
             }
         }
-        fmt.Fprintf( w, "Version %s\n", string(d[0:4]) )
+        fmt.Fprintf( w, "Version %s", string(d[0:4]) )
     }
     return ifd.storeUndefinedAsUnsignedBytes( "Shot Info", 0, fu )
 }
 
 func (ifd *ifdd) storeNikon3ColorBalance( ) error {
-    fu := func( w io.Writer, v interface{} ) {
+    fu := func( w io.Writer, v interface{}, indent string ) {
         d := v.([]uint8)
         if string(d[0:4]) == "0211" {
             dsc, err := ifd.descramble( d[284:284+24] )
@@ -603,12 +590,12 @@ func (ifd *ifdd) storeNikon3ColorBalance( ) error {
                 wbL1 := ifd.desc.endian.Uint16(dsc[18:])
                 wbL2 := ifd.desc.endian.Uint16(dsc[20:])
                 wbL3 := ifd.desc.endian.Uint16(dsc[22:])
-                fmt.Fprintf( w, "Version: %s (%s) WB_GRBGLevels: %d %d %d %d\n",
+                fmt.Fprintf( w, "Version: %s (%s) WB_GRBGLevels: %d %d %d %d",
                         string(d[0:4]), "D5000", wbL0, wbL1, wbL2, wbL3 )
                 return
             }
         }
-        fmt.Fprintf( w, "Version %s\n", string(d[0:4]) )
+        fmt.Fprintf( w, "Version %s", string(d[0:4]) )
     }
     return ifd.storeUndefinedAsUnsignedBytes( "Color Balance", 0, fu )
 }
@@ -629,38 +616,39 @@ func getNikonFocusDistanceString( v uint8 ) string {
 }
 
 func (ifd *ifdd) storeNikon3LensData( ) error {
-    fld := func( w io.Writer, v interface{} ) {
+    fld := func( w io.Writer, v interface{}, indent string ) {
         d := v.([]uint8)
         if string(d[0:4]) == "0204" {
             dsc, err := ifd.descramble( d[4:] )
             if err == nil {
                 var ids =[8]uint8{
-                 dsc[8],dsc[9],dsc[10],dsc[11],dsc[12],dsc[13],dsc[14],dsc[16]}
+                dsc[8],dsc[9],dsc[10],dsc[11],dsc[12],dsc[13],dsc[14],dsc[16]}
                 m := getLensModel( ids )
                 fmt.Fprintf( w, "Model %s\n", m )
-                fmt.Fprintf( w, "        Exit pupil position %.1f mm\n",
+                fmt.Fprintf( w, "%sExit pupil position %.1f mm\n", indent,
                              getNikonExitPupilPosition(dsc[0]) )
-                fmt.Fprintf( w, "        AF Aperture %.1f\n",
+                fmt.Fprintf( w, "%sAF Aperture %.1f\n", indent,
                              getNikonAperture( dsc[1] ) )
-                fmt.Fprintf( w, "        Focus Position %#04x\n", dsc[4] )
-                fmt.Fprintf( w, "        Focus Distance %s\n",
+                fmt.Fprintf( w, "%sFocus Position %#04x\n", indent, dsc[4] )
+                fmt.Fprintf( w, "%sFocus Distance %s\n", indent,
                              getNikonFocusDistanceString( dsc[6] ) )
-                fmt.Fprintf( w, "        Focal Length %.1f mm\n",
+                fmt.Fprintf( w, "%sFocal Length %.1f mm\n", indent,
                              getNikonFocalLen( dsc[7] ) )
-                fmt.Fprintf( w, "        Min Focal Length %.1f mm\n",
+                fmt.Fprintf( w, "%sMin Focal Length %.1f mm\n", indent,
                              getNikonFocalLen( dsc[0x0a] ) )
-                fmt.Fprintf( w, "        Max Focal Length %.1f mm\n",
+                fmt.Fprintf( w, "%sMax Focal Length %.1f mm\n", indent,
                              getNikonFocalLen( dsc[0x0b] ) )
-                fmt.Fprintf( w, "        Max Aperture At Min Focal Length %.1f\n",
+                fmt.Fprintf( w, "%sMax Aperture At Min Focal Length %.1f\n",
+                             indent,
                              getNikonAperture( dsc[0x0c] ) )
-                fmt.Fprintf( w, "        Max Aperture At Max Focal Length %.1f\n",
+                fmt.Fprintf( w, "%sMax Aperture At Max Focal Length %.1f\n",
+                             indent,
                              getNikonAperture( dsc[0x0d] ) )
-                fmt.Fprintf( w, "        Effective Max Aperture %.1f\n",
+                fmt.Fprintf( w, "%sEffective Max Aperture %.1f\n", indent,
                              getNikonAperture( dsc[0x0f] ) )
-                fmt.Fprintf( w, "        Lens FStops %.2f\n",
+                fmt.Fprintf( w, "%sLens FStops %.2f\n", indent,
                              float32(dsc[9])/12 )
-                fmt.Fprintf( w, "        MCU Version %d\n", dsc[0xe] )
-
+                fmt.Fprintf( w, "%sMCU Version %d", indent, dsc[0xe] )
             }
         }
     }
@@ -668,7 +656,7 @@ func (ifd *ifdd) storeNikon3LensData( ) error {
 }
 
 func (ifd *ifdd) storeNikon3DateStampMode() error {
-    fds := func( w io.Writer, v interface{} ) {
+    fds := func( w io.Writer, v interface{}, indent string ) {
         ds := v.([]uint16)
         var dss string
         switch ds[0] {
@@ -677,7 +665,7 @@ func (ifd *ifdd) storeNikon3DateStampMode() error {
         case 2: dss = "Date"
         case 3: dss = "Date Counter"
         }
-        fmt.Fprintf( w, "%s\n", dss )
+        fmt.Fprintf( w, "%s", dss )
     }
     return ifd.storeUnsignedShorts( "Date Stamp Mode", 1, fds )
 }
@@ -730,25 +718,25 @@ var nikonRetouchValues = [...]string{
  "Super Vivid",         "High-contrast Monochrome", "High Key",     "Low Key" }
 
 func (ifd *ifdd) storeNikon3RetouchHistory() error {
-    frh := func( w io.Writer, v interface{} ) {
+    frh := func( w io.Writer, v interface{}, indent string ) {
         rh := v.([]uint16)
-        fmt.Fprintf( w, "%s\n", getNikonRetouchString( rh ) )
+        fmt.Fprintf( w, "%s", getNikonRetouchString( rh ) )
     }
     return ifd.storeUnsignedShorts( "Retouch History", 10, frh )
 }
 
 func (ifd *ifdd) storeNikon3ImageSize() error {
-    fis := func( w io.Writer, v interface{} ) {
+    fis := func( w io.Writer, v interface{}, indent string ) {
         is := v.([]uint32)
-        fmt.Fprintf( w, "%d\n", is[0] )
+        fmt.Fprintf( w, "%d", is[0] )
     }
     return ifd.storeUnsignedLongs( "Compressed Image Size", 1, fis )
 }
 
 func (ifd *ifdd) storeNikon3ShutterCount() error {
-    fsc := func( w io.Writer, v interface{} ) {
+    fsc := func( w io.Writer, v interface{}, indent string ) {
         sc := v.([]uint32)
-        fmt.Fprintf( w, "%d\n", sc[0] )
+        fmt.Fprintf( w, "%d", sc[0] )
     }
     return ifd.storeUnsignedLongs( "Shutter Count", 1, fsc )
 }
@@ -810,9 +798,9 @@ func getFlashControlMode( code uint8 ) (m string) {
 }
 
 func (ifd *ifdd) storeNikon3FlashInfo() error {
-    ffi := func( w io.Writer, v interface{} ) {
+    ffi := func( w io.Writer, v interface{}, indent string ) {
         fi := v.([]uint8)
-//        dumpData( w, "Raw data", "     ", fi )
+//        dumpData( w, "Raw data", "     ", false, fi )
         fmt.Fprintf( w, "Version %s", string(fi[0:4]) )
         fmt.Fprintf( w, " Source %s", getFlashSource( fi[4] ) )
         if fi[4] == 1 { // external source
@@ -830,7 +818,6 @@ func (ifd *ifdd) storeNikon3FlashInfo() error {
             fmt.Fprintf( w, " Mode %s", getFlashControlMode( fcm ) )
 // TODO: complete decoding later
         }
-        fmt.Fprintf( w, "\n" )
     }
     return ifd.storeUndefinedAsUnsignedBytes( "Flash Info", 0, ffi )
 }
@@ -855,9 +842,9 @@ func getNikonOnOff( b bool ) string {
 }
 
 func (ifd *ifdd) storeNikon3MultiExposure() error {
-    fme := func( w io.Writer, v interface{} ) {
+    fme := func( w io.Writer, v interface{}, indent string ) {
         me := v.([]uint8)
-//        dumpData( os.Stdout, "Raw data", "     ", me )
+//        dumpData( os.Stdout, "Raw data", "     ", false, me )
         fmt.Fprintf( w, "Version %s", string(me[0:4]) )
         var endian binary.ByteOrder
         if me[3] == 0x31 {
@@ -868,7 +855,7 @@ func (ifd *ifdd) storeNikon3MultiExposure() error {
         shots := endian.Uint32(me[8:12])
         fmt.Fprintf( w, " Mode %s (%d shots)",
                     getNikonMultiExposureMode(endian.Uint32(me[4:8])), shots )
-        fmt.Fprintf( w, " Auto gain %s\n",
+        fmt.Fprintf( w, " Auto gain %s",
                     getNikonOnOff( 0 != endian.Uint32(me[12:16] ) ))
     }
     return ifd.storeUndefinedAsUnsignedBytes( "Exposure mode", 0, fme )
@@ -889,20 +876,20 @@ func getNikon3HignISONoiseReduction( hnr uint16 ) (s string) {
 }
 
 func (ifd *ifdd) storeNikon3HighISONoiseReduction() error {
-    fhnr := func( w io.Writer, v interface{} ) {
+    fhnr := func( w io.Writer, v interface{}, indent string ) {
         hnr := v.([]uint16)
-        fmt.Fprintf( w, "%s\n", getNikon3HignISONoiseReduction( hnr[0] ) )
+        fmt.Fprintf( w, "%s", getNikon3HignISONoiseReduction( hnr[0] ) )
     }
     return ifd.storeUnsignedShorts( "High ISO Noise Reduction", 1, fhnr )
 }
 
 func (ifd *ifdd) storeNikon3PowerUpTime() error {
-    fpu := func( w io.Writer, v interface{} ) {
+    fpu := func( w io.Writer, v interface{}, indent string ) {
         pu := v.([]uint8)
-//        dumpData( w, "Raw data", "     ", pu )
+//        dumpData( w, "Raw data", "     ", false, pu )
 // 0x0000: 07 e5 06 0d 0e 1a 31 00 
         year := ifd.desc.endian.Uint16(pu[0:2])
-        fmt.Fprintf( w, "%d/%d/%d %d:%d:%d\n",
+        fmt.Fprintf( w, "%d/%d/%d %d:%d:%d",
                     year, pu[2], pu[3], pu[4], pu[5], pu[6] )
     }
     return ifd.storeUndefinedAsUnsignedBytes( "Power Up", 0, fpu )
@@ -1017,9 +1004,9 @@ func getNikon3AFPointsUsed( e binary.ByteOrder, v []uint8 ) string {
 }
 
 func (ifd *ifdd) storeNikon3AFInfo2() error {
-    fafi := func( w io.Writer, v interface{} ) {
+    fafi := func( w io.Writer, v interface{}, indent string ) {
         afi := v.([]uint8)
-//        dumpData( w, "Raw data", "     ", afi )
+//        dumpData( w, "Raw data", "     ", false, afi )
 // 0x0000: 30 31 30 30 00 00 02 0b 00 04 00 00 00 00 00 00 0100............
 // 0x0010: 00 00 00 00 00 00 00 00 00 00 00 00 00 00       ..............
         fmt.Fprintf( w, "Version %s Contrast Detect %s ",
@@ -1029,20 +1016,20 @@ func (ifd *ifdd) storeNikon3AFInfo2() error {
         } else {
             fmt.Fprintf( w, "Area Mode %s\n", getNikon3ContrastDetectArea( afi[5] ) )
         }
-        fmt.Fprintf( w, "           Phase Detect AF %s Primary AF Point %s\n",
+        fmt.Fprintf( w, "%sPhase Detect AF %s Primary AF Point %s", indent,
                     getNikon3PhaseDetectPoints( afi[6] ),
                     getNikon3Point( afi[7] ) )
         if 2 == afi[6] {
-            fmt.Fprintf( w, "           AF Points Used %s\n",
+            fmt.Fprintf( w, "\n%sAF Points Used %s", indent,
                         getNikon3AFPointsUsed( ifd.desc.endian, afi[8:10]) )
         }
         if 0 != afi[4] { // contrast detect off
             fmt.Fprintf( w,
-        "           AF Image Height %d Width %d X position %d Y position %d\n",
-                        ifd.desc.endian.Uint16(afi[10:11]),
-                        ifd.desc.endian.Uint16(afi[12:13]),
-                        ifd.desc.endian.Uint16(afi[14:15]),
-                        ifd.desc.endian.Uint16(afi[16:17]) )
+                "\n%sAF Image Height %d Width %d X position %d Y position %d",
+                indent, ifd.desc.endian.Uint16(afi[10:11]),
+                ifd.desc.endian.Uint16(afi[12:13]),
+                ifd.desc.endian.Uint16(afi[14:15]),
+                ifd.desc.endian.Uint16(afi[16:17]) )
         }
 // TODO: add more
     }
@@ -1050,9 +1037,9 @@ func (ifd *ifdd) storeNikon3AFInfo2() error {
 }
 
 func (ifd *ifdd) storeNikon3FileInfo() error {
-    ffi := func( w io.Writer, v interface{} ) {
+    ffi := func( w io.Writer, v interface{}, indent string ) {
         fi := v.([]uint8)
-        fmt.Fprintf( w, "Version %s Memory card %d Directory # %d file # %d\n",
+        fmt.Fprintf( w, "Version %s Memory card %d Directory # %d file # %d",
                      string(fi[0:4]), ifd.desc.endian.Uint16(fi[4:6]),
                      ifd.desc.endian.Uint16(fi[6:8]),
                      ifd.desc.endian.Uint16(fi[8:10]) )
@@ -1061,15 +1048,13 @@ func (ifd *ifdd) storeNikon3FileInfo() error {
 }
 
 func (ifd *ifdd) storeNikon3RetouchInfo() error {
-    fri := func( w io.Writer, v interface{} ) {
+    fri := func( w io.Writer, v interface{}, indent string ) {
         ri := v.([]uint8)
-//        dumpData( q, "Raw data", "     ", ri )
+//        dumpData( q, "Raw data", "     ", false, ri )
 //      0x0000: 30 31 30 30 ff 00                               0100..
         fmt.Fprintf( w, "Version %s", ri[0:4] )
         if string(ri[0:2]) == "02" {
-            fmt.Fprintf( w, " NEF Processing %s\n", getNikonOnOff( 1 == ri[5]) )
-        } else {
-            fmt.Fprintf( w, "\n" )
+            fmt.Fprintf( w, " NEF Processing %s", getNikonOnOff( 1 == ri[5]) )
         }
     }
     return ifd.storeUndefinedAsUnsignedBytes( "Retouch Info", 0, fri )
@@ -1083,9 +1068,9 @@ func getRationalString( v unsignedRational) string {
 }
 
 func (ifd *ifdd) storeNikom3WhiteBalanceRBLevels() error {
-    fwb := func( w io.Writer, v interface{} ) {
+    fwb := func( w io.Writer, v interface{}, indent string ) {
         wb := v.([]unsignedRational)
-        fmt.Fprintf( w, "%s %s %s %s\n",
+        fmt.Fprintf( w, "%s %s %s %s",
                      getRationalString(wb[0]), getRationalString(wb[1]),
                      getRationalString(wb[2]), getRationalString(wb[3]) )
     }
@@ -1158,8 +1143,7 @@ func storeNikon3Tags( ifd *ifdd ) error {
         return ifd.storeNikon3ISOInfo( )
     case _Nikon3DistortInfo:
         return ifd.storeNikon3DistortInfo( )
-//    case _Nikon302c:
-//        return ifd.storeUndefinedInfo( "Nikon 0x002c" )
+
     case _Nikon3LensType:
         return ifd.storeNikon3LensType( )
     case _Nikon3LensInfo:
@@ -1168,8 +1152,7 @@ func storeNikon3Tags( ifd *ifdd ) error {
         return ifd.storeNikon3FlashMode( )
     case _Nikon3ShootingMode:
         return ifd.storeNikon3ShootingMode( )
-//    case _Nikon308a:    // 1 _UnsignedShort
-//        return ifd.storeUnknownEntry( "Nikon 0x008a" )
+
     case _Nikon3LensFStops:
         return ifd.storeNikon3UndefinedFraction( "Lens F Stops", 4, "" )
     case _Nikon3ShotInfo:
@@ -1186,8 +1169,7 @@ func storeNikon3Tags( ifd *ifdd ) error {
         return ifd.storeNikon3RetouchHistory( )
     case _Nikon3ImageSize:
         return ifd.storeNikon3ImageSize( )
-//    case _Nikon30a3:
-//        return ifd.storeAnyUnknownSilently( )
+
     case _Nikon3ShutterCount:
         return ifd.storeNikon3ShutterCount( )
     case _Nikon3FlashInfo:
@@ -1252,7 +1234,8 @@ const (
 
 func (ifd *ifdd)processNikonMakerNote3( offset uint32 ) error {
 //    fmt.Printf( "Offset %#08x Count %d\n", offset, ifd.fCount )
-//    dumpData( os.Stdout, "Nikon Maker Note Type 3", "   ", ifd.desc.data[offset:offset+ifd.fCount] )
+//    dumpData( os.Stdout, "Nikon Maker Note Type 3", "   ", false,
+//              ifd.desc.data[offset:offset+ifd.fCount] )
 
     // Nikon maker notes type 3 looks like an Exif metadata file with its own
     // endianess and own reference (not the same origin as the exif descriptor).
@@ -1513,6 +1496,7 @@ var lensIDs = [...]lensIdConv{
 {[8]uint8{0x98,0x3C,0xA6,0xA6,0x30,0x30,0x9A,0x0E}, "AF-S VR Nikkor 600mm f/4G ED"},
 {[8]uint8{0x99,0x40,0x29,0x62,0x2C,0x3C,0x9B,0x0E}, "AF-S DX VR Zoom-Nikkor 16-85mm f/3.5-5.6G ED"},
 {[8]uint8{0x9A,0x40,0x2D,0x53,0x2C,0x3C,0x9C,0x0E}, "AF-S DX VR Zoom-Nikkor 18-55mm f/3.5-5.6G"},
+{[8]uint8{0x9A,0x40,0x2D,0x53,0x2C,0x3C,0x9C,0x0F}, "AF-S DX VR Zoom-Nikkor 18-55mm f/3.5-5.6G"},
 {[8]uint8{0x9B,0x54,0x4C,0x4C,0x24,0x24,0x9D,0x02}, "PC-E Micro Nikkor 45mm f/2.8D ED"},
 {[8]uint8{0x9B,0x00,0x4C,0x4C,0x24,0x24,0x9D,0x06}, "PC-E Micro Nikkor 45mm f/2.8D ED"},
 {[8]uint8{0x9C,0x54,0x56,0x56,0x24,0x24,0x9E,0x06}, "AF-S Micro Nikkor 60mm f/2.8G ED"},

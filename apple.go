@@ -71,7 +71,7 @@ func (pn *pNode)print( indent string ) {
     case string:
         fmt.Printf( "%s%s\n", indent, o )
     case []byte:
-        dumpData( os.Stdout, indent+"data", indent+"  ", o )
+        dumpData( os.Stdout, indent+"data", indent+"  ", false, o )
     case map[string]*pNode:
         for k, v := range o {
             fmt.Printf( "%s%s", indent, k )
@@ -283,7 +283,9 @@ func getPlist( pList []byte ) ( *pNode, error ) {
     return getObject( topObjectStart )
 }
 
-func (ifd *ifdd) storeApplePLIST( name string, p func( io.Writer, interface{} ) ) error {
+func (ifd *ifdd) storeApplePLIST(
+                        name string,
+                        p func( io.Writer, interface{}, string ) ) error {
 
     if ifd.fType != _Undefined {
         return fmt.Errorf( "%s (PList): invalid type (%s)\n", name, getTiffTString( ifd.fType ) )
@@ -293,12 +295,12 @@ func (ifd *ifdd) storeApplePLIST( name string, p func( io.Writer, interface{} ) 
     return nil
 }
 
-func dumpPlist( w io.Writer, v interface{} ) {
+func dumpPlist( w io.Writer, v interface{}, indent string ) {
     data := v.([]byte)
-    dumpData( w, "plist", "     ", data )
+    dumpData( w, "plist", indent + "  ", true, data )
 }
 
-func printRuntime( w io.Writer, v interface{} ) {
+func printRuntime( w io.Writer, v interface{}, indent string ) {
     pList := v.([]byte)
     root, err := getPlist( pList ); if err != nil {
         fmt.Fprintf( w, "Invalid runtime (not a plist)\n" )
@@ -332,7 +334,8 @@ https://developer.apple.com/library/ios/documentation/CoreMedia/Reference/CMTime
         switch k {
         case "flags":
             flag, ok := v.value.(uint64); if ! ok {
-                fmt.Fprintf( w, "        Invalid flag (not an int)\n" )
+                fmt.Fprintf( w, "Invalid flag (not an int)" )
+                break
             }
             switch flag {
             case 0: fs = "is Valid"
@@ -344,33 +347,36 @@ https://developer.apple.com/library/ios/documentation/CoreMedia/Reference/CMTime
 
         case "value":
             val, ok := v.value.(uint64); if ! ok {
-                fmt.Fprintf( w, "        Invalid flag (not an int)\n" )
+                fmt.Fprintf( w, "Invalid flag (not an int)" )
+                break
             }
             value = float64(val)
 
         case "epoch":
             e, ok := v.value.(uint64); if ! ok {
-                fmt.Fprintf( w, "        Invalid epoch (not an int)\n" )
+                fmt.Fprintf( w, "Invalid epoch (not an int)" )
+                break
             }
             epoch = e
 
         case "timescale":
             ts, ok := v.value.(uint64); if ! ok {
-                fmt.Fprintf( w, "      Invalid timescale (not an int)\n" )
+                fmt.Fprintf( w, "Invalid timescale (not an int)" )
+                break
             }
             scale = float64(ts)
         }
     }
 
     if fs != "" && value != 0.0 && scale != 0.0 {
-        fmt.Fprintf( w, "\n     Value : %f seconds (epoch %d) - %s\n", value/scale, epoch, fs )
+        fmt.Fprintf( w, "Value : %f seconds (epoch %d) - %s", value/scale, epoch, fs )
     }
 }
 
 func (ifd *ifdd) storeAppleAccelerationVector( ) error {
     v, err := ifd.checkSignedRationals( 3 )
     if err == nil {
-        p := func( w io.Writer,v interface{} ) {
+        p := func( w io.Writer,v interface{}, indent string ) {
             av := v.([]signedRational)
     /*
         AccelerationVector
@@ -381,13 +387,13 @@ func (ifd *ifdd) storeAppleAccelerationVector( ) error {
         See
     http://nscookbook.com/2013/03/ios-programming-recipe-19-using-core-motion-to-access-gyro-and-accelerometer/
     */
-            fmt.Fprintf( w, "\n     Vector X: %f (%d/%d)\n",
+            fmt.Fprintf( w, "Vector X: %f (%d/%d)\n",
                         float32(av[0].Numerator)/float32(av[0].Denominator),
                         av[0].Numerator, av[0].Denominator )
-            fmt.Fprintf( w, "     Vector Y: %f (%d/%d)\n",
+            fmt.Fprintf( w, "%sVector Y: %f (%d/%d)\n", indent,
                         float32(av[1].Numerator)/float32(av[1].Denominator),
                         av[1].Numerator, av[1].Denominator )
-            fmt.Fprintf( w, "     Vector Z: %f (%d/%d)\n",
+            fmt.Fprintf( w, "%sVector Z: %f (%d/%d)", indent,
                         float32(av[2].Numerator)/float32(av[2].Denominator),
                         av[2].Numerator, av[2].Denominator )
         }
@@ -398,7 +404,7 @@ func (ifd *ifdd) storeAppleAccelerationVector( ) error {
 
 func (ifd *ifdd) storeAppleImageType( ) error {
 //          = 0x000a  // 1 _SignedLong: 2=iPad mini 2, 3=HDR Image, 4=Original Image
-    var fait = func ( w io.Writer, v interface{} ) {
+    var fait = func ( w io.Writer, v interface{}, indent string ) {
         it := v.(int32)
         var s string
         switch it {
@@ -407,22 +413,22 @@ func (ifd *ifdd) storeAppleImageType( ) error {
         case 4: s = "Original Image"
         default: s = "Unknown Image Type"
         }
-        fmt.Fprintf( w, "%s\n", s )
+        io.WriteString( w, s )
     }
     return ifd.storeSignedLongs( "  Apple Image Type", 1, fait )
 }
 
 func (ifd *ifdd) storeAppleOrientation( ) error {
 // 1 _SignedLong Orientation? 0=landscape? 4=portrait?
-    var fao = func( w io.Writer, v interface{} ) {
+    var fao = func( w io.Writer, v interface{}, indent string ) {
         o := v.(int32)
         var s string
         switch v {
         case 0: s = "Landscape"
         case 4: s = "portrait"
-        default: s = "?"
+        default: s = fmt.Sprintf( "Undefined (%d)", o )
         }
-        fmt.Fprintf( w, "%s (%d)\n", s, o )
+        io.WriteString( w, s )
     }
     return ifd.storeSignedLongs( "  Apple Image orientation", 1, fao )
 }
@@ -517,7 +523,7 @@ func (ifd *ifdd) processAppleMakerNote( offset uint32 ) error {
 
 //    fmt.Printf( "Apple maker notes: origin %#04x start %#04x, end %#04x, endian %v\n",
 //                offset, 14, offset + ifd.fCount, endian )
-//    dumpData( os.Stdout, "    MakerNote", "      ", ifd.desc.data[offset:offset+ifd.fCount] )
+//    dumpData( os.Stdout, "    MakerNote", "      ", false, ifd.desc.data[offset:offset+ifd.fCount] )
     var apple *ifdd
     _, apple, err = mknd.storeIFD( MAKER, _APPLE_MAKER_IFD_OFFSET, storeAppleTags )
     if err != nil {

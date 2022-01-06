@@ -141,7 +141,7 @@ When thumbnails use JPEG compression, this tag value is set to 6.
             ifd.desc.global["thumbType"] = cType // remember compression type
         }
 
-        fmtCompression := func( w io.Writer, v interface{} ) {
+        fmtCompression := func( w io.Writer, v interface{}, indent string ) {
             c := v.([]uint16)
             var cString string
             switch( c[0] ) {
@@ -157,16 +157,24 @@ When thumbnails use JPEG compression, this tag value is set to 6.
             case 10: cString = "RFC 2301 (color JBIG)."
             case 32773: cString = "PackBits compression (Macintosh RLE)"
             }
-            fmt.Fprintf( w, "%s\n", cString )
+            io.WriteString( w, cString )
         }
         ifd.storeValue( ifd.newUnsignedShortValue( "Compression", fmtCompression, c ) )
     }
     return err
 }
 
+func (ifd *ifdd) store1Fraction1Decimal( name string ) error {
+    f1f1d := func( w io.Writer, v interface{}, indent string ) {
+        f := v.([]unsignedRational)
+        fmt.Fprintf( w, "%.1f", float32(f[0].Numerator)/float32(f[0].Denominator) )
+    }
+    return ifd.storeUnsignedRationals( name, 1, f1f1d )
+}
+
 func (ifd *ifdd) storeTiffOrientation( ) error {
 
-    fmtv := func( w io.Writer, v interface{} ) {
+    fmtv := func( w io.Writer, v interface{}, indent string ) {
         o := v.([]uint16)
         var oString string
         switch( o[0] ) {
@@ -179,10 +187,9 @@ func (ifd *ifdd) storeTiffOrientation( ) error {
         case 7: oString = "Row #0 Right, Col #0 Bottom"
         case 8: oString = "Row #0 Left, Col #0 Bottom"
         default:
-            fmt.Fprintf( w, "Illegal orientation (%d)\n", o[0] )
-            return
+            oString = fmt.Sprintf( "Illegal orientation (%d)", o[0] )
         }
-        fmt.Fprintf( w, "%s\n", oString )
+        io.WriteString( w, oString )
     }
 
     return ifd.storeUnsignedShorts( "Orientation", 1, fmtv )
@@ -190,7 +197,7 @@ func (ifd *ifdd) storeTiffOrientation( ) error {
 
 func (ifd *ifdd) storeTiffResolutionUnit( ) error {
 
-    fmtv := func( w io.Writer, v interface{} ) {
+    fmtv := func( w io.Writer, v interface{}, indent string ) {
         ru := v.([]uint16)
         var ruString string
         switch( ru[0] ) {
@@ -198,27 +205,25 @@ func (ifd *ifdd) storeTiffResolutionUnit( ) error {
         case 2 : ruString = "Dots per Inch"
         case 3 : ruString = "Dots per Cm"
         default:
-            fmt.Fprintf( w, "Illegal resolution unit (%d)\n", ru[0] )
-            return
+            ruString = fmt.Sprintf( "Illegal resolution unit (%d)", ru[0] )
         }
-        fmt.Fprintf( w, "%s\n", ruString )
+        io.WriteString( w, ruString )
     }
     return ifd.storeUnsignedShorts( "Resolution Unit", 1, fmtv )
 }
 
 func (ifd *ifdd) storeTiffYCbCrPositioning( ) error {
 
-    fmtv := func( w io.Writer, v interface{} ) {
+    fmtv := func( w io.Writer, v interface{}, indent string ) {
         pos := v.([]uint16)
         var posString string
         switch( pos[0] ) {
         case 1 : posString = "Centered"
         case 2 : posString = "Cosited"
         default:
-            fmt.Fprintf( w, "Illegal positioning (%d)\n", pos[0] )
-            return
+            posString = fmt.Sprintf( "Illegal positioning (%d)", pos[0] )
         }
-        fmt.Fprintf( w, "%s\n", posString )
+        io.WriteString( w, posString )
     }
     return ifd.storeUnsignedShorts( "YCbCr Positioning", 1, fmtv )
 }
@@ -266,9 +271,9 @@ func storeTiffTags( ifd *ifdd ) error {
     case _Orientation:
         return ifd.storeTiffOrientation( )
     case _XResolution:
-        return ifd.storeUnsignedRationals( "XResolution", 1, nil )
+        return ifd.store1Fraction1Decimal( "XResolution " )
     case _YResolution:
-        return ifd.storeUnsignedRationals( "YResolution", 1, nil )
+        return ifd.store1Fraction1Decimal( "YResolution " )
     case _ResolutionUnit:
         return ifd.storeTiffResolutionUnit( )
     case _Software:
@@ -389,15 +394,15 @@ func (ifd *ifdd) storeExifVersion( ) error {
 }
 
 func (ifd *ifdd) storeExifExposureTime( ) error {
-    fmtv := func( w io.Writer, v interface{} ) {
+    fmtv := func( w io.Writer, v interface{}, indent string ) {
         et := v.([]unsignedRational)
-        fmt.Fprintf( w, "%f seconds\n", float32(et[0].Numerator)/float32(et[0].Denominator) )
+        fmt.Fprintf( w, "%f seconds", float32(et[0].Numerator)/float32(et[0].Denominator) )
     }
     return ifd.storeUnsignedRationals( "Exposure Time", 1, fmtv )
 }
 
 func (ifd *ifdd) storeExifExposureProgram( ) error {
-    fmtv := func( w io.Writer, v interface{} ) {
+    fmtv := func( w io.Writer, v interface{}, indent string ) {
         ep := v.([]uint16)
         var epString string
         switch ep[0] {
@@ -413,14 +418,14 @@ func (ifd *ifdd) storeExifExposureProgram( ) error {
         default:
             epString = fmt.Sprintf( "Illegal Exposure Program (%d)", ep[0] )
         }
-        fmt.Fprintf( w, "%s\n", epString )
+        io.WriteString( w, epString )
     }
     return ifd.storeUnsignedShorts( "Exposure Program", 1, fmtv )
 }
 
 func (ifd *ifdd) storeExifComponentsConfiguration( ) error {
 
-    p := func( w io.Writer, v interface{} ) {
+    p := func( w io.Writer, v interface{}, indent string ) {
         bSlice := v.([]byte)
         var config strings.Builder
         for _, b := range bSlice {
@@ -435,21 +440,21 @@ func (ifd *ifdd) storeExifComponentsConfiguration( ) error {
             default: config.WriteByte( '?' )
             }
         }
-        fmt.Fprintf( w, "%s\n", config.String() )
+        io.WriteString( w, config.String() )
     }
 
     return ifd.storeUndefinedAsUnsignedBytes( "Components Configuration", 4, p )
 }
 
 func (ifd *ifdd) storeExifSubjectDistance( ) error {
-    fmtv := func( w io.Writer, v interface{} ) {
+    fmtv := func( w io.Writer, v interface{}, indent string ) {
         sd := v.([]unsignedRational)
         if sd[0].Numerator == 0 {
-            fmt.Fprintf( w, "Unknown\n" )
+            fmt.Fprintf( w, "Unknown" )
         } else if sd[0].Numerator == 0xffffffff {
-            fmt.Fprintf( w, "Infinity\n" )
+            fmt.Fprintf( w, "Infinity" )
         } else {
-            fmt.Fprintf( w, "%f meters\n",
+            fmt.Fprintf( w, "%f meters",
                          float32(sd[0].Numerator)/float32(sd[0].Denominator) )
         }
     }
@@ -457,7 +462,7 @@ func (ifd *ifdd) storeExifSubjectDistance( ) error {
 }
 
 func (ifd *ifdd) storeExifMeteringMode( ) error {
-    fmtv := func( w io.Writer, v interface{} ) {
+    fmtv := func( w io.Writer, v interface{}, indent string ) {
         mm := v.([]uint16)
         var mmString string
         switch mm[0] {
@@ -470,16 +475,15 @@ func (ifd *ifdd) storeExifMeteringMode( ) error {
         case 6 : mmString = "Partial"
         case 255: mmString = "Other"
         default:
-            fmt.Fprintf( w, "Illegal Metering Mode (%d)\n", mm[0] )
-            return
+            mmString = fmt.Sprintf( "Illegal Metering Mode (%d)", mm[0] )
         }
-        fmt.Fprintf( w, "%s\n", mmString )
+        io.WriteString( w, mmString )
     }
     return ifd.storeUnsignedShorts( "Metering Mode", 1, fmtv )
 }
 
 func (ifd *ifdd) storeExifLightSource( ) error {
-    fmtv := func( w io.Writer, v interface{} ) {
+    fmtv := func( w io.Writer, v interface{}, indent string ) {
         ls := v.([]uint16)
         var lsString string
         switch ls[0] {
@@ -505,16 +509,15 @@ func (ifd *ifdd) storeExifLightSource( ) error {
         case 24 : lsString = "ISO studio tungsten"
         case 255: lsString = "Other light source"
         default:
-            fmt.Fprintf( w, "Illegal light source (%d)\n", ls[0] )
-            return
+            lsString = fmt.Sprintf( "Illegal light source (%d)", ls[0] )
         }
-        fmt.Fprintf( w, "%s\n", lsString )
+        io.WriteString( w, lsString )
     }
     return ifd.storeUnsignedShorts( "Light Source", 1, fmtv )
 }
 
 func (ifd *ifdd) storeExifFlash( ) error {
-    fmtv := func( w io.Writer, v interface{} ) {
+    fmtv := func( w io.Writer, v interface{}, indent string ) {
         f := v.([]uint16)
         var fString string
         switch f[0] {
@@ -540,10 +543,9 @@ func (ifd *ifdd) storeExifFlash( ) error {
         case 0x5D : fString = "Flash fired, auto mode, return light not detected, red-eye reduction mode"
         case 0x5F : fString = "Flash fired, auto mode, return light detected, red-eye reduction mode"
         default:
-            fmt.Fprintf( w, "Illegal Flash (%#02x)\n", f[0] )
-            return
+            fString = fmt.Sprintf( "Illegal Flash (%#02x)", f[0] )
         }
-        fmt.Fprintf( w, "%s\n", fString )
+        io.WriteString( w, fString )
     }
     return ifd.storeUnsignedShorts( "Flash", 1, fmtv )
 }
@@ -553,16 +555,16 @@ func (ifd *ifdd) storeExifSubjectArea( ) error {
         return fmt.Errorf( "Subject Area: invalid count (%d)\n", ifd.fCount )
     }
 
-    fmsa := func( w io.Writer, v interface{} ) {
+    fmsa := func( w io.Writer, v interface{}, indent string ) {
         loc := v.([]uint16)
         switch len(loc) {
         case 2:
-            fmt.Fprintf( w, "Point x=%d, y=%d\n", loc[0], loc[1] )
+            fmt.Fprintf( w, "Point x=%d, y=%d", loc[0], loc[1] )
         case 3:
-            fmt.Fprintf( w, "Circle center x=%d, y=%d diameter=%d\n",
+            fmt.Fprintf( w, "Circle center x=%d, y=%d diameter=%d",
                          loc[0], loc[1], loc[2] )
         case 4:
-            fmt.Fprintf( w, "Rectangle center x=%d, y=%d width=%d height=%d\n",
+            fmt.Fprintf( w, "Rectangle center x=%d, y=%d width=%d height=%d",
                          loc[0], loc[1], loc[2], loc[3] )
         }
     }
@@ -596,28 +598,27 @@ func (ifd *ifdd) storeExifUserComment( ) error {
     offset := ifd.desc.getUnsignedLong( ifd.sOffset )
     ud := ifd.desc.data[offset:offset+ifd.fCount]
 
-    p := func( w io.Writer, v interface{} ) {
+    p := func( w io.Writer, v interface{}, indent string ) {
         ud := v.([]byte)
         encoding := ud[0:8]
         switch encoding[0] {
         case 0x41:  // ASCII?
             if bytes.Equal( encoding, []byte{ 'A', 'S', 'C', 'I', 'I', 0, 0, 0 } ) {
-                fmt.Fprintf( w, " ITU-T T.50 IA5 (ASCII) [%s]\n", string(ud[8:]) )
+                fmt.Fprintf( w, " ITU-T T.50 IA5 (ASCII)\n" )
+                comment := bytes.Trim( ud[8:], " " )
+                fmt.Fprintf( w, "%s%q", indent + "  ", comment )
             }
         case 0x4a: // JIS?
             if bytes.Equal( encoding, []byte{ 'J', 'I', 'S', 0, 0, 0, 0, 0 } ) {
-                fmt.Fprintf( w, "JIS X208-1990 (JIS):" )
-                dumpData( w, "    UserComment", "      ", ud[8:] )
+                dumpData( w, "JIS X208-1990 (JIS)", indent + "  ", true, ud[8:] )
             }
         case 0x55:  // UNICODE?
             if bytes.Equal( encoding, []byte{ 'U', 'N', 'I', 'C', 'O', 'D', 'E', 0 } ) {
-                fmt.Fprintf( w, "Unicode Standard:" )
-                dumpData( w, "    UserComment", "      ", ud[8:] )
+                dumpData( w, "Unicode Standard", indent + "  ", true, ud[8:] )
             }
         case 0x00:  // Undefined
             if bytes.Equal( encoding, []byte{ 0, 0, 0, 0, 0, 0, 0, 0 } ) {
-                fmt.Fprintf( w, "Undefined encoding:" )
-                dumpData( w, "    UserComment", "      ", ud[8:] )
+                dumpData( w, "Undefined encoding", indent + "  ", true, ud[8:] )
             }
         default:
             fmt.Fprintf( w, "Invalid encoding\n" )
@@ -640,17 +641,16 @@ func (ifd *ifdd) storeExifFlashpixVersion( ) error {
 }
 
 func (ifd *ifdd) storeExifColorSpace( ) error {
-    fmtv := func( w io.Writer, v interface{} ) {
+    fmtv := func( w io.Writer, v interface{}, indent string ) {
         cs := v.([]uint16)
         var csString string
         switch cs[0] {
         case 1 : csString = "sRGB"
         case 65535: csString = "Uncalibrated"
         default:
-            fmt.Fprintf( w, "Illegal color space (%d)\n", cs[0] )
-            return
+            csString = fmt.Sprintf( "Illegal color space (%d)", cs[0] )
         }
-        fmt.Fprintf( w, "%s\n", csString )
+        io.WriteString( w, csString )
     }
     return ifd.storeUnsignedShorts( "Color Space", 1, fmtv )
 }
@@ -665,7 +665,7 @@ func (ifd *ifdd) storeExifDimension( name string ) error {
 }
 
 func (ifd *ifdd) storeExifSensingMethod( ) error {
-    fmtv := func( w io.Writer, v interface{} ) {
+    fmtv := func( w io.Writer, v interface{}, indent string ) {
         sm := v.([]uint16)
         var smString string
         switch sm[0] {
@@ -677,37 +677,33 @@ func (ifd *ifdd) storeExifSensingMethod( ) error {
         case 7 : smString = "Trilinear sensor"
         case 8 : smString = "Color sequential linear sensor"
         default:
-            fmt.Fprintf( w, "Illegal sensing method (%d)\n", sm[0] )
-            return
+            smString = fmt.Sprintf( "Illegal sensing method (%d)", sm[0] )
         }
-        fmt.Fprintf( w, "%s\n", smString )
+        io.WriteString( w, smString )
     }
     return ifd.storeUnsignedShorts( "Sensing Method", 1, fmtv )
 }
 
 func (ifd *ifdd) storeExifFileSource( ) error {
-    fmtv := func( w io.Writer, v interface{} ) {  // undfined but expect byte
+    fmtv := func( w io.Writer, v interface{}, indent string ) {  // undfined but expect byte
         bs := v.([]byte)
         if bs[0] != 3 {
-            fmt.Fprintf( w, "Illegal file source (%d)\n", bs[0] )
-            return
+            fmt.Fprintf( w, "Illegal file source (%d)", bs[0] )
+        } else {
+            fmt.Fprintf( w, "Digital Still Camera (DSC)" )
         }
-        fmt.Fprintf( w, "Digital Still Camera (DSC)\n" )
     }
     return ifd.storeUndefinedAsUnsignedBytes( "File Source", 1, fmtv )
 }
 
 func (ifd *ifdd) storeExifSceneType( ) error {
-    fmtv := func( w io.Writer, v interface{} ) {  // undefined but expect byte
+    fmtv := func( w io.Writer, v interface{}, indent string ) {  // undefined but expect byte
         bs := v.([]byte)
-        var stString string
-        switch bs[0] {
-        case 1 : stString = "Directly photographed"
-        default:
-            fmt.Fprintf( w, "Illegal scene type (%d)\n", bs[0] )
-            return
+        if bs[0] != 1 {
+            fmt.Fprintf( w, "Illegal scene type (%d)", bs[0] )
+        } else {
+            io.WriteString( w, "Directly photographed" )
         }
-        fmt.Fprintf( w, "%s\n", stString )
     }
     return ifd.storeUndefinedAsUnsignedBytes( "Scene Type", 1, fmtv )
 }
@@ -740,89 +736,87 @@ func (ifd *ifdd) storeExifCFAPattern( ) error {
             fmt.Printf("CFAPattern: Warning: incorrect endianess\n")
         }
     }
-
-    // current h and v will still be accessible from f
-    p := func( w io.Writer, v interface{} ) {
-        c := v.([]byte)
-        for i := uint16(4); i < vt; i++ {    // skip first 4 bytes 
-            fmt.Fprintf( w, "\n      Row %d:", i )
+//fmt.Printf( "hz %d, vt %d\n", hz, vt )
+    // current hz and vt will still be accessible from f
+    p := func( w io.Writer, v interface{}, indent string ) {
+        c := v.([]byte)[4:] // skip first 4 bytes (use hz & vt from enclosing block)
+        for i := uint16(0); i < vt; i++ {
+            if i > 0 {  // indent if not the first line
+                io.WriteString( w, "\n" + indent )
+            }
+            fmt.Fprintf( w, "Row %d:", i )
             for j := uint16(0); j < hz; j++ {
                 var s string
                 switch c[(i*hz)+j] {
-                case 0: s = "RED"
-                case 1: s = "GREEN"
-                case 2: s = "BLUE"
-                case 3: s = "CYAN"
-                case 4: s = "MAGENTA"
-                case 5: s = "YELLOW"
-                case 6: s = "WHITE"
+                case 0: s = " RED"
+                case 1: s = " GREEN"
+                case 2: s = " BLUE"
+                case 3: s = " CYAN"
+                case 4: s = " MAGENTA"
+                case 5: s = " YELLOW"
+                case 6: s = " WHITE"
                 default:
-                    fmt.Fprintf( w, "Invalid color (%d)\n", c[(i*hz)+j] )
+                    fmt.Fprintf( w, " Invalid color (%d)", c[(i*hz)+j] )
                     return
                 }
-                fmt.Fprintf( w, " %s", s )
+                io.WriteString( w, s )
             }
         }
-        fmt.Fprintf( w, "\n" )
     }
     ifd.storeValue( ifd.newUnsignedByteValue( "Color Filter Array Pattern", p, bSlice ) )
     return nil
 }
 
 func (ifd *ifdd) storeExifCustomRendered( ) error {
-    fmtv := func( w io.Writer, v interface{} ) {
+    fmtv := func( w io.Writer, v interface{}, indent string ) {
         cr := v.([]uint16)
         switch cr[0] {
-        case 0 : fmt.Fprintf( w, "Normal process\n" )
-        case 1 : fmt.Fprintf( w, "Custom process\n" )
-        default: fmt.Fprintf( w, "Illegal rendering process (%d)\n", cr[0] )
+        case 0 : fmt.Fprintf( w, "Normal process" )
+        case 1 : fmt.Fprintf( w, "Custom process" )
+        default: fmt.Fprintf( w, "Illegal rendering process (%d)", cr[0] )
         }
     }
     return ifd.storeUnsignedShorts( "Custom Rendered", 1, fmtv )
 }
 
 func (ifd *ifdd) storeExifExposureMode( ) error {
-    fmtv := func( w io.Writer, v interface{} ) {
+    fmtv := func( w io.Writer, v interface{}, indent string ) {
         em := v.([]uint16)
         var emString string
         switch em[0] {
         case 0 : emString = "Auto exposure"
         case 1 : emString = "Manual exposure"
         case 3 : emString = "Auto bracket"
-        default:
-            fmt.Fprintf( w, "Illegal Exposure mode (%d)\n", em[0] )
-            return
+        default: emString = fmt.Sprintf( "Illegal Exposure mode (%d)", em[0] )
         }
-        fmt.Fprintf( w, "%s\n", emString )
+        fmt.Fprintf( w, "%s", emString )
     }
     return ifd.storeUnsignedShorts( "Exposure Mode", 1, fmtv )
 }
 
 func (ifd *ifdd) storeExifWhiteBalance( ) error {
-    fmtv := func( w io.Writer, v interface{} ) {
+    fmtv := func( w io.Writer, v interface{}, indent string ) {
         wb := v.([]uint16)
         var wbString string
         switch wb[0] {
         case 0 : wbString = "Auto white balance"
         case 1 : wbString = "Manual white balance"
-        default:
-            fmt.Fprintf( w, "Illegal white balance (%d)\n", wb[0] )
-            return
+        default: wbString = fmt.Sprintf( "Illegal white balance (%d)", wb[0] )
         }
-        fmt.Fprintf( w, "%s\n", wbString )
+        io.WriteString( w, wbString )
     }
     return ifd.storeUnsignedShorts( "White Balance", 1, fmtv )
 }
 
 func (ifd *ifdd) storeExifDigitalZoomRatio( ) error {
-    fmv := func( w io.Writer, v interface{} ) {
+    fmv := func( w io.Writer, v interface{}, indent string ) {
         dzr := v.([]unsignedRational)
         if dzr[0].Numerator == 0 {
-            fmt.Fprintf( w, "not used\n" )
+            fmt.Fprintf( w, "not used" )
         } else if dzr[0].Denominator == 0 {
-            fmt.Fprintf( w, "invalid ratio Denominator (0)\n" )
+            fmt.Fprintf( w, "invalid ratio Denominator (0)" )
         } else {
-            fmt.Fprintf( w, "%f\n",
+            fmt.Fprintf( w, "%f",
                          float32(dzr[0].Numerator)/float32(dzr[0].Denominator) )
         }
     }
@@ -830,7 +824,7 @@ func (ifd *ifdd) storeExifDigitalZoomRatio( ) error {
 }
 
 func (ifd *ifdd) storeExifSceneCaptureType( ) error {
-    fmtv := func( w io.Writer, v interface{} ) {
+    fmtv := func( w io.Writer, v interface{}, indent string ) {
         ct := v.([]uint16)
         var sctString string
         switch ct[0] {
@@ -839,16 +833,15 @@ func (ifd *ifdd) storeExifSceneCaptureType( ) error {
         case 2 : sctString = "Portrait"
         case 3 : sctString = "Night scene"
         default:
-            fmt.Fprintf( w, "Illegal scene capture type (%d)\n", ct[0] )
-            return
+            sctString = fmt.Sprintf( "Illegal scene capture type (%d)", ct[0] )
         }
-        fmt.Fprintf( w, "%s\n", sctString )
+        io.WriteString( w, sctString )
     }
     return ifd.storeUnsignedShorts( "Scene-Capture Type", 1, fmtv )
 }
 
 func (ifd *ifdd) storeExifGainControl( ) error {
-    fmtv := func( w io.Writer, v interface{} ) {
+    fmtv := func( w io.Writer, v interface{}, indent string ) {
         gc := v.([]uint16)
         var gcString string
         switch gc[0] {
@@ -857,68 +850,60 @@ func (ifd *ifdd) storeExifGainControl( ) error {
         case 2 : gcString = "high gain up"
         case 3 : gcString = "low gain down"
         case 4 : gcString = "high gain down"
-        default:
-            fmt.Fprintf( w, "Illegal gain control (%d)\n", gc[0] )
-            return
+        default: gcString = fmt.Sprintf( "Illegal gain control (%d)", gc[0] )
         }
-        fmt.Fprintf( w, "%s\n", gcString )
+        io.WriteString( w, gcString )
     }
     return ifd.storeUnsignedShorts( "Gain Control", 1, fmtv )
 }
 
 func (ifd *ifdd) storeExifContrast( ) error {
-    fmtv := func( w io.Writer, v interface{} ) {
+    fmtv := func( w io.Writer, v interface{}, indent string ) {
         c := v.([]uint16)
         var cString string
         switch c[0] {
         case 0 : cString = "Normal"
         case 1 : cString = "Soft"
         case 2 : cString = "Hard"
-        default:
-            fmt.Fprintf( w, "Illegal contrast (%d)\n", c[0] )
-            return
+        default: cString = fmt.Sprintf( "Illegal contrast (%d)", c[0] )
         }
-        fmt.Fprintf( w, "%s\n", cString )
+        io.WriteString( w, cString )
     }
     return ifd.storeUnsignedShorts( "Contrast", 1, fmtv )
 }
 
 func (ifd *ifdd) storeExifSaturation( ) error {
-    fmtv := func( w io.Writer, v interface{} ) {
+    fmtv := func( w io.Writer, v interface{}, indent string ) {
         s := v.([]uint16)
         var sString string
         switch s[0] {
         case 0 : sString = "Normal"
         case 1 : sString = "Low saturation"
         case 2 : sString = "High saturation"
-        default:
-            fmt.Fprintf( w, "Illegal Saturation (%d)\n", s[0] )
-            return
+        default: sString = fmt.Sprintf( "Illegal Saturation (%d)", s[0] )
         }
-        fmt.Fprintf( w, "%s\n", sString )
+        io.WriteString( w, sString )
     }
     return ifd.storeUnsignedShorts( "Saturation", 1, fmtv )
 }
 
 func (ifd *ifdd) storeExifSharpness( ) error {
-    fmtv := func( w io.Writer, v interface{} ) {
+    fmtv := func( w io.Writer, v interface{}, indent string ) {
         s := v.([]uint16)
         var sString string
         switch s[0] {
         case 0 : sString = "Normal"
         case 1 : sString = "Soft"
         case 2 : sString = "Hard"
-        default:
-            fmt.Fprintf( w, "Illegal Sharpness (%d)\n", s[0] )
-            return
+        default: sString = fmt.Sprintf( "Illegal Sharpness (%d)", s[0] )
         }
-        fmt.Fprintf( w, "%s\n", sString )
+        io.WriteString( w, sString )
     }
     return ifd.storeUnsignedShorts( "Sharpness", 1, fmtv )
 }
 
 func (ifd *ifdd) storeExifDistanceRange( ) error {
-    fmtv := func( w io.Writer, v interface{} ) {
+    fmtv := func( w io.Writer, v interface{}, indent string ) {
         dr := v.([]uint16)
         var drString string
         switch dr[0] {
@@ -926,11 +911,9 @@ func (ifd *ifdd) storeExifDistanceRange( ) error {
         case 1 : drString = "Macro"
         case 2 : drString = "Close View"
         case 3 : drString = "Distant View"
-        default:
-            fmt.Fprintf( w, "Illegal Distance Range (%d)\n", dr[0] )
-            return
+        default: drString = fmt.Sprintf( "Illegal Distance Range (%d)", dr[0] )
         }
-        fmt.Fprintf( w, "%s\n", drString )
+        io.WriteString( w, drString )
     }
     return ifd.storeUnsignedShorts( "Distance Range", 1, fmtv )
 }
@@ -944,20 +927,16 @@ func (ifd *ifdd) storeExifLensSpecification( ) error {
 //  which are specification information for the lens that was used in photography.
 //  When the minimum F number is unknown, the notation is 0/0.
 
-    fmls := func( w io.Writer, v interface{} ) {
+    fmls := func( w io.Writer, v interface{}, indent string ) {
         ls := v.([]unsignedRational)
 
-        fmt.Fprintf( w, "\n     minimum focal length: %d/%d=%f\n",
-                    ls[0].Numerator, ls[0].Denominator,
+        fmt.Fprintf( w, "minimum focal length: %.1f\n",
                     float32(ls[0].Numerator)/float32(ls[0].Denominator) )
-        fmt.Fprintf( w, "     maximum focal length: %d/%d=%f\n",
-                    ls[1].Numerator, ls[1].Denominator,
+        fmt.Fprintf( w, "%smaximum focal length: %.1f\n", indent,
                     float32(ls[1].Numerator)/float32(ls[1].Denominator) )
-        fmt.Fprintf( w, "     minimum F number: %d/%d=%f\n",
-                    ls[2].Numerator, ls[2].Denominator,
+        fmt.Fprintf( w, "%sminimum F number: %.1f\n", indent,
                     float32(ls[2].Numerator)/float32(ls[2].Denominator) )
-        fmt.Fprintf( w, "     maximum F number: %d/%d=%f\n",
-                    ls[3].Numerator, ls[3].Denominator,
+        fmt.Fprintf( w, "%smaximum F number: %.1f", indent,
                     float32(ls[3].Numerator)/float32(ls[3].Denominator) )
     }
     return ifd.storeUnsignedRationals( "Lens Specification", 4, fmls )
@@ -1123,9 +1102,9 @@ const (                                     // _GPS IFD specific tags
 )
 
 func (ifd *ifdd) storeGPSVersionID( ) error {
-    p := func( w io.Writer, v interface{} ) {
+    p := func( w io.Writer, v interface{}, indent string ) {
         vid := v.([]byte)
-        fmt.Fprintf( w, "%d.%d.%d.%d\n", vid[0], vid[1], vid[2], vid[3] )
+        fmt.Fprintf( w, "%d.%d.%d.%d", vid[0], vid[1], vid[2], vid[3] )
     }
     return ifd.storeUnsignedBytes( "GPS Version ID", 4, p )
 }
@@ -1145,9 +1124,9 @@ const (                                     // _IOP IFD tags
 )
 
 func (ifd *ifdd) storeInteroperabilityVersion( ) error {
-    p := func( w io.Writer, v interface{} ) {
+    p := func( w io.Writer, v interface{}, indent string ) {
         bs := v.([]byte)
-        fmt.Fprintf( w, "%#02x, %#02x, %#02x, %#02x\n",
+        fmt.Fprintf( w, "%c.%c.%c.%c",
                      bs[0], bs[1], bs[2], bs[3] )
     }
     return ifd.storeUndefinedAsUnsignedBytes( "Interoperability Version", 4, p )

@@ -411,7 +411,7 @@ func (ifd *ifdd) processUnknownTag( ) error {
     return nil
 }
 
-func dumpData(w io.Writer,  header string, indent string, data []byte ) {
+func dumpData(w io.Writer,  header, indent string, noLf bool, data []byte ) {
     fmt.Fprintf( w, "%s:\n", header )
     for i := 0; i < len(data); i += 16 {
         fmt.Fprintf( w, "%s%#04x: ", indent, i );
@@ -431,13 +431,16 @@ func dumpData(w io.Writer,  header string, indent string, data []byte ) {
         }
         for ; j < 16; j++ {
             io.WriteString( w, "   " )
-//            fmt.Fprintf( w, "   " )
         }
-        fmt.Fprintf( w, "%s\n", b.String() )
+        if noLf && i + 16 >= len(data) {
+            io.WriteString( w, b.String() )
+        } else {
+            fmt.Fprintf( w, "%s\n", b.String() )
+        }
     }
 }
 
-func getEndianess( data []byte ) ( endian binary.ByteOrder, err error) {
+func getEndianess( data []byte ) ( endian binary.ByteOrder, err error ) {
     endian = binary.BigEndian
     err = nil
     // TIFF header starts with 2 bytes indicating the byte ordering ("II" short
