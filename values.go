@@ -17,9 +17,9 @@ type tEntry struct {
 
 /*
     In order to allow modifying/removing TIFF metadata, each IFD entry is
-    stored individually as a tiffvalue.
+    stored individually as a "value".
 
-    In input TIFF data types are converted in go types:
+    input TIFF data types are converted into go values:
     _UnsignedByte       => []uint8
     _ASCIIString        => []uint8
     _UnsignedShort      => []uint16
@@ -33,17 +33,17 @@ type tEntry struct {
     _Float              => []float32
     _Double             => []float64
 
-    Then those go types are saved as tiffValue:
-    []uint8         -> unsignedByteValue for _UnsignedByte(s) and _ASCIIString
-                    -> descValue for same Maker notes requiring their own reference
-                    -> ifdValue for embedded ifd or some maker notes
-    []uint16        -> unsignedShortValue for _UnsignedShort(s)
-    []uint32        -> unsignedLongValue for _UnsignedLong(s)
+    Then those go types are saved as <type>Values:
+    []uint8            -> unsignedByteValue for _UnsignedByte(s) & _ASCIIString
+                       -> descValue for maker notes requiring their own reference
+                       -> ifdValue for embedded ifd or some maker notes
+    []uint16           -> unsignedShortValue for _UnsignedShort(s)
+    []uint32           -> unsignedLongValue for _UnsignedLong(s)
     []unsignedRational -> unsignedRationalValue for _UnsignedRational(s)
-    []int8          -> signedByteValue for _SignedByte(s)
-    []int16         -> signedShortValue for _SignedShort(s)
-    []int32         -> signedLongValue for _SignedLong(s)
-    []signedRational -> signedRationalValue for _SignedRational(s)
+    []int8             -> signedByteValue for _SignedByte(s)
+    []int16            -> signedShortValue for _SignedShort(s)
+    []int32            -> signedLongValue for _SignedLong(s)
+    []signedRational   -> signedRationalValue for _SignedRational(s)
 */
 
 type unsignedRational struct {
@@ -893,21 +893,6 @@ func (ifd *ifdd) storeSignedShorts(
     return err
 }
 
-func (ifd *ifdd) storeUndefinedAsSignedShorts(
-                            name string, count uint32,
-                            print func(io.Writer, interface{}, string) ) error {
-    if ifd.fType != _Undefined {
-        return fmt.Errorf( "%s: incorrect type (%s)\n",
-                           name, getTiffTString( ifd.fType ) )
-    }
-    if count != 0 && count != ifd.fCount {
-        return fmt.Errorf( "%s: incorrect count (%d)\n", name, ifd.fCount )
-    }
-    ifd.storeValue( ifd.newSignedShortValue( name, print,
-                                ifd.getSignedShorts( ) ) )
-    return nil
-}
-
 func (ifd *ifdd) storeUnsignedLongs(
                             name string, count uint32,
                             p func( io.Writer, interface{}, string) ) error {
@@ -948,32 +933,22 @@ func (ifd *ifdd) storeSignedRationals(
     return err
 }
 
-// Store as read from the ifd entry fType and fCount, as long as fType is not
-// _Undefined, which would not allow to know the data size.
-func (ifd *ifdd) storeAnyNonUndefined(
-                            name string,
-                            p func( io.Writer, interface{}, string) ) error {
+// Store as read from the ifd entry fType and fCount.
+// no name and no format function are given, so as to prevent display
+func (ifd *ifdd) storeAnyUnknownSilently( ) error {
     switch ifd.fType {
-    case _UnsignedByte:     return ifd.storeUnsignedBytes( name, ifd.fCount, p )
-    case _ASCIIString:      return ifd.storeAsciiString( name )
-    case _UnsignedShort:    return ifd.storeUnsignedShorts( name, ifd.fCount, p )
-    case _UnsignedLong:     return ifd.storeUnsignedLongs( name, ifd.fCount, p )
-    case _UnsignedRational: return ifd.storeUnsignedRationals( name, ifd.fCount, p )
-    case _SignedByte:       return ifd.storeSignedBytes( name, ifd.fCount, p )
-    case _Undefined:        return fmt.Errorf( "storeAnyNonUndefined: undefined type\n")
-    case _SignedShort:      return ifd.storeSignedShorts( name, ifd.fCount, p )
-    case _SignedLong:       return ifd.storeSignedLongs( name, ifd.fCount, p )
-    case _SignedRational:   return ifd.storeSignedRationals( name, ifd.fCount, p )
+    case _UnsignedByte:     return ifd.storeUnsignedBytes( "", 0, nil )
+    case _ASCIIString:      return ifd.storeAsciiString( "" )
+    case _UnsignedShort:    return ifd.storeUnsignedShorts( "", 0, nil )
+    case _UnsignedLong:     return ifd.storeUnsignedLongs( "", 0, nil )
+    case _UnsignedRational: return ifd.storeUnsignedRationals( "", 0, nil )
+    case _SignedByte:       return ifd.storeSignedBytes( "", 0, nil )
+    case _Undefined:        return ifd.storeUndefinedAsUnsignedBytes( "", 0, nil )
+    case _SignedShort:      return ifd.storeSignedShorts( "", 0, nil )
+    case _SignedLong:       return ifd.storeSignedLongs( "", 0, nil )
+    case _SignedRational:   return ifd.storeSignedRationals( "", 0, nil )
     }
     return fmt.Errorf( "storeAnyNonUndefined: unsupported type %s\n",
                        getTiffTString( ifd.fType ) )
-}
-
-func (ifd *ifdd) storeAnyUnknownSilently( ) error {
-    if ifd.fType == _Undefined {
-        return ifd.storeUndefinedAsUnsignedBytes( "", 0, nil )
-    } else {
-        return ifd.storeAnyNonUndefined( "", nil )
-    }
 }
 

@@ -283,18 +283,6 @@ func getPlist( pList []byte ) ( *pNode, error ) {
     return getObject( topObjectStart )
 }
 
-func (ifd *ifdd) storeApplePLIST(
-                        name string,
-                        p func( io.Writer, interface{}, string ) ) error {
-
-    if ifd.fType != _Undefined {
-        return fmt.Errorf( "%s (PList): invalid type (%s)\n", name, getTiffTString( ifd.fType ) )
-    }
-    pList := ifd.getUnsignedBytes( )
-    ifd.storeValue( ifd.newUnsignedByteValue( name, p, pList ) )
-    return nil
-}
-
 func dumpPlist( w io.Writer, v interface{}, indent string ) {
     data := v.([]byte)
     dumpData( w, "plist", indent + "  ", true, data )
@@ -441,9 +429,9 @@ func storeAppleTags( ifd *ifdd ) error {
     case _Apple001:
         return ifd.storeSignedLongs( "Apple #0001", 1, nil )
     case _Apple002:
-        return ifd.storeApplePLIST( "Apple #0002", dumpPlist )
+        return ifd.storeUndefinedAsUnsignedBytes( "Apple #0002", 0, dumpPlist )
     case _AppleRunTime:
-        return ifd.storeApplePLIST( "Apple RunTime", printRuntime )
+        return ifd.storeUndefinedAsUnsignedBytes( "Apple RunTime", 0, printRuntime )
     case _Apple004:
         return ifd.storeSignedLongs( "Apple #0004", 1, nil )
     case _Apple005:

@@ -246,9 +246,15 @@ func (ifd *ifdd) storeJPEGInterchangeFormatLength( ) error {
             return fmt.Errorf("JPEGInterchangeFormatLength without JPEGInterchangeFormat\n")
         }
         ifd.desc.global["thumbLen"] = length[0]
+
+        // Special case where the normal calculation of dataEnd fails
+        end := offset + length[0]
+        if end > ifd.desc.dataEnd {
+            ifd.desc.dataEnd = end
+        }
         ifd.storeValue(
             ifd.newThumbnailValue( _JPEGInterchangeFormat,
-                                   ifd.desc.data[offset:offset+length[0]] ) )
+                                   ifd.desc.data[offset:end] ) )
         ifd.storeValue( ifd.newUnsignedLongValue( "", nil, length ) )
     }
     return err
@@ -1143,17 +1149,32 @@ func storeIopTags( ifd *ifdd ) error {
     }
 }
 
+// keep track of the upper end of the data area
+// WARNING:
+// This does not work for thumbnails where the size is given by a separate tag,
+// i.e. storeJPEGInterchangeFormat & storeJPEGInterchangeFormatLength.
+// This is treated as a special case in storeJPEGInterchangeFormatLength
+func (ifd *ifdd)setDataAreaHighWaterMark( ) {
+    size := getTiffTypeSize( ifd.fType ) * ifd.fCount
+    if size > 4 {
+        offset := ifd.desc.getUnsignedLong( ifd.sOffset ) + size
+        if offset > ifd.desc.dataEnd {
+            ifd.desc.dataEnd = offset
+        }
+    }
+}
+
 // storeIfd makes a new ifdd, checks all entries and store the corresponding
 // values in the ifdd. It returns the offset of the next ifd in list (0 if
 // none), the newly created ifdd and an error if it failed.
 func (d *Desc) storeIFD( id IfdId, start uint32,
                          storeTags func(*ifdd) error ) ( uint32, *ifdd, error ) {
 
-    /*
-        Image File Directory starts with the number of following directory entries (2 bytes)
-        followed by that number of entries (12 bytes) and one extra offset to the next IFD
-        (4 bytes) and is followed by the IFD data area
-    */
+/*
+    Image File Directory starts with the number of following directory entries (2 bytes)
+    followed by that number of entries (12 bytes) and one extra offset to the next IFD
+    (4 bytes) and is followed by the IFD data area
+*/
     ifd := new( ifdd )
     ifd.id = id
     ifd.desc = d
@@ -1179,6 +1200,8 @@ func (d *Desc) storeIFD( id IfdId, start uint32,
         }
 
         ifd.sOffset += 8
+        ifd.setDataAreaHighWaterMark()
+
         err := storeTags( ifd )
         if err != nil {
             return 0, nil, fmt.Errorf( "storeIFD: invalid field: %v", err )
@@ -1187,6 +1210,7 @@ func (d *Desc) storeIFD( id IfdId, start uint32,
     }
     d.ifds[id] = ifd                            // store in flat ifd array
     offset := d.getUnsignedLong( ifd.sOffset )  // next IFD offset in list
+
     if d.ParsDbg {
         if offset == 0 {
             fmt.Printf( "storeIFD %s IFD (%d): no next IFD in list\n",

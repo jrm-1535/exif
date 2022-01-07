@@ -73,6 +73,7 @@ const (
 
 func GetCompressionString( c Compression ) string {
     switch c {
+    case Undefined:             return "Undefined"
     case NotCompressed:         return "Not compressed"
     case CCITT_1D:              return "CCITT 1D"
     case CCITT_Group3:          return "CCITT Group 3"
@@ -122,6 +123,12 @@ const (
     _IFD_N                  // last entry + 1 to size arrays
 )
 
+type ThumbnailInfo struct {
+    Origin  string          // either "Thumbnail" or "Maker Note Embedded"
+    Comp    Compression     // type of image compression
+    Size    uint32          // image size
+}
+
 var ifdNames  = [...]string{ "Primary", "Thumbnail", "Exif",
                              "GPS", "Interoperability",
                              "Maker Note", "Maker Note Embedded" }
@@ -144,7 +151,9 @@ var makerNotes = [...]maker{ { "Apple", tryAppleMakerNote },
 
 type Desc struct {
     data    []byte          // starts at TIFF header (right after exif header)
-    origin  uint32          // except for some maker notes
+    origin  uint32          // except for some maker notes (e.g. apple)
+    dataEnd uint32          // data area end, updated during parsing
+
     endian  binary.ByteOrder // endianess as defined in binary
 
     global  map[string]interface{}  // storage for global information
@@ -186,6 +195,26 @@ const (                 // TIFF Type sizes (signed or unsigned)
     _FloatSize      = 4
     _DoubleSize     = 8
 )
+
+func getTiffTypeSize( t tType ) uint32 {
+    switch t {
+        case _UnsignedByte: return _ByteSize
+        case _ASCIIString: return _ByteSize
+        case _UnsignedShort: return _ShortSize
+        case _UnsignedLong: return _LongSize
+        case _UnsignedRational: return _RationalSize
+        case _SignedByte: return _ByteSize
+        case _Undefined: return _ByteSize   // count in bytes
+        case _SignedShort: return _ShortSize
+        case _SignedLong: return _LongSize
+        case _SignedRational: return _RationalSize
+        case _Float: return _FloatSize
+        case _Double: return _DoubleSize
+        default:
+            break
+    }
+     panic(fmt.Sprintf("TIFF type %s does not have a size", getTiffTString(t)))
+}
 
 func getTiffTString( t tType ) string {
     switch t {
@@ -486,19 +515,15 @@ func Parse( data []byte, start, dLen int, ec *Control ) (*Desc, error) {
     if err != nil {
         return nil, err
     }
-
     offset, err := d.checkValidTiff( )
     if err != nil {
         return nil, err
     }
-//    fmt.Printf( "  Primary Image metadata @%#04x\n", offset )
     offset, d.root, err = d.storeIFD( PRIMARY, offset, storeTiffTags )
     if err != nil {
         return nil, err
     }
-
     if offset != 0 {
-//        fmt.Printf( "  Thumbnail Image metadata @%#04x\n", offset )
         _, d.root.next, err = d.storeIFD( THUMBNAIL, offset, storeTiffTags )
         if err != nil {
             return nil, err
@@ -562,53 +587,100 @@ func Read( path string, start int, ec *Control ) (*Desc, error) {
 
 // Write the parsed EXIF metadata into a file. It returns the number of bytes
 // written in the file in case of success or an error in case of failure.
-func (d *Desc)Write( path string ) (n int, err error) {
+func (d *Desc)Write( path string ) (int, error) {
 
-    var f *os.File
-    f, err = os.OpenFile( path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.ModePerm)
+    f, err := os.OpenFile( path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.ModePerm)
     if err != nil {
         return 0, err
     }
-    n, err = d.serialize( f )
-    if err != nil {
-        return
-    }
-    fmt.Printf( "wrote %d bytes to %s\n", n, path )
-    f.Close( )
+    defer f.Close()
+    return d.serialize( f )
+}
 
-    // temporary, save exif data into file - exif-src.txt
-    {
-        ifd := d.root
-        if ifd.next != nil {
-            ifd = ifd.next
+// WriteOriginal writes the original exif metadata into a new seperate file
+// The argument path gives the path of the new file to write.
+// If succesful, it returns the number of bytes written, otherwise it returns
+// a non nil error.
+func (d *Desc)WriteOriginal( path string ) (n int, err error) {
+
+    var f *os.File
+    f, err = os.OpenFile( path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.ModePerm)
+    if err == nil {
+        defer f.Close()
+        n, err = f.Write( []byte( "Exif\x00\x00" ) )
+        if err == nil {
+            var written int
+            written, err = f.Write( d.data[0:d.dataEnd] )
+            n += written
         }
-        dLen := int( ifd.dOffset )
-	    f, err = os.OpenFile( "exif-src.bin", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.ModePerm)
-        _, err = f.Write( []byte( "Exif\x00\x00" ) )
-        _, err = f.Write( d.data[0:dLen] )
-        if err != nil { return 0, err }
-        err = f.Close( )
-        if err != nil { return 0, err }
     }
-    // end of temporary stuff
-
     return
 }
 
-// GetThumnail returns information about a possible thumbnail.
-// It returns the thumbnail starting offset in the original data slice,
-// the size of the thumbnail data and the thumbnail compression type.
-// If no thumbnail was found in the metadata, the starting offset and
-// size are 0 and the comprssion type is exif.Undefined Compression.
-func (d *Desc)GetThumbnail() (uint32, uint32, Compression) {
-    tOffset, _ := d.global["thumbOffset"].(uint32)
-    tLen, _ := d.global["thumbLen"].(uint32)
-    tType, _ := d.global["thumbType"].(Compression)
+// WriteThumbnail writes the thumbnail data into a new seperate file
+// The argument path gives the path of the new file to write.
+// The argument from gives the id of the ifd that provides the thumbnail.
+// As long as an ifd referred by the id exists, thumbnail information is
+// retrived and if the thumbnail is not empty it is written to the file.
+// Actually any existing ifd in [ exif.PRIMARY, exif.THUMBNAIL, exif.EXIF,
+// exif.GPS, exif.IOP ] will return the exif thumbnail (if it exists),
+// while any existing ifd in [ exif.MAKER, exif.EMBEDDED] will return the
+// maker thumbnail (or preview image) if it exists.
+// If succesful, it returns the number of bytes written, otherwise it returns
+// a non nil error.
+func (d *Desc)WriteThumbnail( path string, from IfdId ) (int, error) {
 
-    if tOffset != 0 {
-        tOffset += _originOffset
+    var ifd *ifdd
+    if from < _IFD_N {
+        ifd = d.ifds[from]
     }
-    return tOffset, tLen, tType
+    if ifd == nil {
+        return 0, fmt.Errorf( "WriteThumbail: ifd %d not found\n", from )
+    }
+    tOffset, _ := ifd.desc.global["thumbOffset"].(uint32)
+    if tOffset == 0 {
+        return 0, fmt.Errorf( "WriteThumbail: thumbnail not found in ifd %d\n", from )
+    }
+    tLen, _ := ifd.desc.global["thumbLen"].(uint32)
+    if tLen == 0 {
+        return 0, fmt.Errorf( "WriteThumbail: empty thumbnail found in ifd %d\n", from )
+    }
+
+    f, err := os.OpenFile( path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.ModePerm)
+    if err != nil {
+        return 0, err
+    }
+    defer f.Close()
+    return f.Write( ifd.desc.data[tOffset:tOffset+tLen] )
+}
+
+// GetThumbnailInfo returns information about all possible thumbnails.
+// It returns a slice of ThumnailInfo structures. In each ThumbailInfo, it
+// gives the thumbnail origin (either "Thumbnail" or "Maker Note Embedded"),
+// the size of the thumbnail data and the thumbnail compression type.
+func (d *Desc)GetThumbnailInfo() (ti []ThumbnailInfo) {
+    ti = make( []ThumbnailInfo, 0, 2 )
+    tOffset, _ := d.global["thumbOffset"].(uint32)
+    if tOffset != 0 {
+        tLen, _ := d.global["thumbLen"].(uint32)
+        tType, _ := d.global["thumbType"].(Compression)
+        ti = append( ti, ThumbnailInfo{ "Thumbnail", tType, tLen } )
+    }
+
+    // lookup for EMBEDDED IfID:
+    for id := IfdId(0); id < _IFD_N; id++ {
+        ifd := d.ifds[id]
+        if ifd != nil && ifd.id == EMBEDDED {
+            tOffset, _ = ifd.desc.global["thumbOffset"].(uint32)
+            if tOffset != 0 {
+                tLen, _ := ifd.desc.global["thumbLen"].(uint32)
+                tType, _ := ifd.desc.global["thumbType"].(Compression)
+                ti = append( ti, ThumbnailInfo{ "Maker Note Embedded", tType, tLen } )
+            }
+            break
+        }
+    }
+    return
 }
 
 // Write formatted IFDs on the passed io.Writer argument w
