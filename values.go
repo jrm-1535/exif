@@ -270,12 +270,12 @@ func (dv *descValue) serializeEntry( w io.Writer ) (err error) {
     if sz == 0 {
         if dv.ifd.desc.SrlzDbg {
             fmt.Printf( "%s ifd serializeEntry: Get %s ifd size @offset %#08x\n",
-                        dv.ifd.getIfdName(), dv.v.root.getIfdName(), dv.ifd.dOffset )
+                        GetIfdName(dv.ifd.id), GetIfdName(dv.v.root.id), dv.ifd.dOffset )
         }
         _, err = dv.v.root.serializeEntries( io.Discard, 0 )
         if err != nil {
             err = fmt.Errorf( "%s ifd serializeEntry: Get %s ifd size: %v",
-                              dv.ifd.getIfdName(), dv.v.root.getIfdName(), err )
+                              GetIfdName(dv.ifd.id), GetIfdName(dv.v.root.id), err )
             return
         }
         sz = dv.v.root.dOffset + uint32(len(dv.header))
@@ -285,7 +285,7 @@ func (dv *descValue) serializeEntry( w io.Writer ) (err error) {
     dv.vCount = sz
     if dv.ifd.desc.SrlzDbg {
         fmt.Printf( "%s ifd got embedded %s ifd size=%d\n",
-                    dv.ifd.getIfdName(), dv.v.root.getIfdName(), sz )
+                    GetIfdName(dv.ifd.id), GetIfdName(dv.v.root.id), sz )
     }
 
     if err = binary.Write( w, dv.ifd.desc.endian, dv.tVal.tEntry ); err == nil {
@@ -298,7 +298,7 @@ func (dv *descValue) serializeEntry( w io.Writer ) (err error) {
 func (dv *descValue)serializeData( w io.Writer ) (err error) {
     if dv.ifd.desc.SrlzDbg {
         fmt.Printf( "%s ifd Serialize in data whole %s ifd @offset %#08x\n",
-                    dv.ifd.getIfdName(), dv.v.root.getIfdName(), dv.ifd.dOffset )
+                    GetIfdName(dv.ifd.id), GetIfdName(dv.v.root.id), dv.ifd.dOffset )
     }
 
     _, err = w.Write( []byte( dv.header ) ) // including endian+0x002a+0x00000008
@@ -343,12 +343,12 @@ func (iv *ifdValue) serializeEntry( w io.Writer ) (err error) {
     if sz == 0 {
         if iv.ifd.desc.SrlzDbg {
             fmt.Printf( "%s ifd serializeEntry: Get %s ifd size @offset %#08x\n",
-                        iv.ifd.getIfdName(), iv.v.getIfdName(), iv.ifd.dOffset )
+                        GetIfdName(iv.ifd.id), GetIfdName(iv.v.id), iv.ifd.dOffset )
         }
         _, err = iv.v.serializeEntries( io.Discard, 0 )
         if err != nil {
             err = fmt.Errorf( "%s ifd serializeEntry: Get %s ifd size: %v\n",
-                        iv.ifd.getIfdName(), iv.v.getIfdName(), err )
+                        GetIfdName(iv.ifd.id), GetIfdName(iv.v.id), err )
             return
         }
         sz = iv.v.dOffset   // since we serialized from offset 0
@@ -356,7 +356,7 @@ func (iv *ifdValue) serializeEntry( w io.Writer ) (err error) {
     }
     if iv.ifd.desc.SrlzDbg {
         fmt.Printf( "%s ifd got embedded %s ifd size=%d\n",
-                    iv.ifd.getIfdName(), iv.v.getIfdName(), sz )
+                    GetIfdName(iv.ifd.id), GetIfdName(iv.v.id), sz )
     }
     err = binary.Write( w, iv.ifd.desc.endian, iv.ifd.dOffset )
     iv.ifd.dOffset += sz
@@ -365,7 +365,7 @@ func (iv *ifdValue) serializeEntry( w io.Writer ) (err error) {
 func (iv *ifdValue)serializeData( w io.Writer ) (err error) {
     if iv.ifd.desc.SrlzDbg {
         fmt.Printf( "%s ifd Serialize in data whole %s ifd @offset %#08x\n",
-                    iv.ifd.getIfdName(), iv.v.getIfdName(), iv.ifd.dOffset )
+                    GetIfdName(iv.ifd.id), GetIfdName(iv.v.id), iv.ifd.dOffset )
     }
     var eSz, dSz uint32
     eSz, err = iv.v.serializeEntries( w, iv.ifd.dOffset )

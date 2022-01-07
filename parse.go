@@ -1185,7 +1185,7 @@ func (d *Desc) storeIFD( id IfdId, start uint32,
 
     if d.ParsDbg {
         fmt.Printf( "storeIFD %s IFD (%d): %d entries\n",
-                    ifd.getIfdName(), id, nIfdEntries )
+                    GetIfdName(id), id, nIfdEntries )
     }
 
     for i := uint16(0); i < nIfdEntries; i++ {
@@ -1195,7 +1195,7 @@ func (d *Desc) storeIFD( id IfdId, start uint32,
 
         if d.ParsDbg {
             fmt.Printf( "storeIFD %s IFD (%d): entry %d @%#08x: tag %#04x, %d %s\n",
-                        ifd.getIfdName(), id, i, ifd.sOffset, ifd.fTag,
+                        GetIfdName(id), id, i, ifd.sOffset, ifd.fTag,
                         ifd.fCount, getTiffTString( ifd.fType ) )
         }
 
@@ -1214,10 +1214,10 @@ func (d *Desc) storeIFD( id IfdId, start uint32,
     if d.ParsDbg {
         if offset == 0 {
             fmt.Printf( "storeIFD %s IFD (%d): no next IFD in list\n",
-                        ifd.getIfdName(), id )
+                        GetIfdName(id), id )
         } else {
             fmt.Printf( "storeIFD %s IFD (%d): next ifd @offset %#08x\n",
-                        ifd.getIfdName(), id, offset )
+                        GetIfdName(id), id, offset )
         }
     }
     return offset, ifd, nil

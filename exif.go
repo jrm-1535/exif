@@ -72,7 +72,7 @@ const (
 )
 
 // return the name of a compression code
-func GetCompressionString( c Compression ) string {
+func GetCompressionName( c Compression ) string {
     switch c {
     case Undefined:             return "Undefined"
     case NotCompressed:         return "Not compressed"
@@ -129,12 +129,12 @@ var ifdNames  = [...]string{ "Primary", "Thumbnail", "Exif",
                              "GPS", "Interoperability",
                              "Maker Note", "Maker Note Embedded" }
 
-func (ifd *ifdd) getIfdName( ) string {
-    id := ifd.id
-    if id >= _IFD_N {
-        panic("getIfdName: invalid Ifd Id\n")
+// Given an IfdId, return the corresponding Ifd nickname
+func GetIfdName( id IfdId ) string {
+    if id < _IFD_N {
+        return ifdNames[id]
     }
-    return ifdNames[id]
+    return "Unknown Ifd"
 }
 
 type maker  struct {
@@ -423,12 +423,12 @@ func (ifd *ifdd) processPadding( ) error {
 func (ifd *ifdd) processUnknownTag( ) error {
     if ifd.desc.Warn {
         fmt.Printf( "%s: unknown or unsupported tag (%#02x) @offset %#04x type %s count %d\n",
-                    ifd.getIfdName(), ifd.fTag, ifd.sOffset-8,
+                    GetIfdName(ifd.id), ifd.fTag, ifd.sOffset-8,
                     getTiffTString( ifd.fType ), ifd.fCount )
     }
     if 0 != ifd.desc.Unknown & Stop {
         return fmt.Errorf( "%s: storeExifTags: stop at unknown tag %#02x\n",
-                           ifd.getIfdName(), ifd.fTag )
+                           GetIfdName(ifd.id), ifd.fTag )
     }
     if 0 == ifd.desc.Unknown & Remove {
         return ifd.storeAnyUnknownSilently( )

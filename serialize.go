@@ -81,7 +81,7 @@ func (ifd *ifdd)serializeEntries( w io.Writer, offset uint32 ) (uint32, error) {
 
     if ifd.desc.SrlzDbg {
         fmt.Printf( "%s ifd serialize: %d entries starting @%#08x data Offset %#08x\n",
-                    ifd.getIfdName(), len(ifd.values), offset, ifd.dOffset )
+                    GetIfdName(ifd.id), len(ifd.values), offset, ifd.dOffset )
     }
     // write number of entries first as an _UnsignedShort
     err := binary.Write( w, endian, uint16(len(ifd.values)) )
@@ -95,12 +95,12 @@ func (ifd *ifdd)serializeEntries( w io.Writer, offset uint32 ) (uint32, error) {
         err = ifd.values[i].serializeEntry( w )
         if err != nil {
             err = fmt.Errorf( "%s ifd serializeEntry %d: %v\n",
-                               ifd.getIfdName(), i, err )
+                              GetIfdName(ifd.id), i, err )
             return written, err
         }
         if ifd.desc.SrlzDbg {
             fmt.Printf( "%s ifd serialized entry %d dOffset %#08x\n",
-                        ifd.getIfdName(), i, ifd.dOffset )
+                        GetIfdName(ifd.id), i, ifd.dOffset )
         }
         written += _IfdEntrySize
     }
@@ -111,7 +111,7 @@ func (ifd *ifdd)serializeEntries( w io.Writer, offset uint32 ) (uint32, error) {
     }
     if ifd.desc.SrlzDbg {
         fmt.Printf( "%s ifd serialize: next ifd at offset %#08x\n",
-                    ifd.getIfdName(), nIfdOffset )
+                    GetIfdName(ifd.id), nIfdOffset )
     }
     err = binary.Write( w, endian, nIfdOffset )
     if err != nil {
@@ -130,20 +130,20 @@ func (ifd *ifdd)serializeDataArea( w io.Writer, origin uint32 ) (uint32, error) 
     for i := 0; i < len(ifd.values); i++ {
         err = ifd.values[i].serializeData( w )
         if err != nil {
-            err = fmt.Errorf("%s ifd serializeDataArea for entry %d: %v\n",
-                               ifd.getIfdName(), i, err )
+            err = fmt.Errorf( "%s ifd serializeDataArea for entry %d: %v\n",
+                              GetIfdName(ifd.id), i, err )
             return 0, err
         }
         if ifd.desc.SrlzDbg {
-            fmt.Printf( "ifd %d serialized data for entry %d dOffset %#08x\n",
-                        ifd.id, i, ifd.dOffset )
+            fmt.Printf( "%s ifd serialized data for entry %d dOffset %#08x\n",
+                        GetIfdName(ifd.id), i, ifd.dOffset )
         }
     }
 
     written := ifd.dOffset - origin
     if ifd.desc.SrlzDbg {
         fmt.Printf( "%s ifd serialize data: returning with size %d\n",
-                    ifd.getIfdName(), written )
+                    GetIfdName(ifd.id), written )
     }
     return written, err
 }
