@@ -54,8 +54,8 @@ const (
     _IfdEntrySize = ( _ShortSize + _LongSize) * 2
 )
 
+// Image Compression enum
 type Compression uint
-
 const (
     Undefined Compression = iota
     NotCompressed
@@ -71,6 +71,7 @@ const (
     PackBits
 )
 
+// return the name of a compression code
 func GetCompressionString( c Compression ) string {
     switch c {
     case Undefined:             return "Undefined"
@@ -90,41 +91,36 @@ func GetCompressionString( c Compression ) string {
     return "Unknown"
 }
 
-// Control Unknown tag BitMask:
-// 0 => Keep unknown tag and metadata
-// 1 => Remove tag and metadata
-// 2 => stop in error at first unknown tag
+// Control Unknown Tag bitMask
+type ConUnTag uint
 const (
-    Keep   = 0
-    Remove = 1
-    Stop   = 2
+    Keep ConUnTag = iota    // Keep unknown tag and metadata
+    Remove                  // Remove tag and metadata
+    Stop                    // Stop in error at first unknown tag
 )
 
 type Control struct {
-    Unknown uint            // how to deal with unknown tags
+    Unknown ConUnTag        // how to deal with unknown tags
     Warn    bool            // turn on warnings (unknown tags & non-fatal errors)
     ParsDbg bool            // turn on parse debug
     SrlzDbg bool            // turn on serialize debug
 }
 
+// IFD ID, used as a namespace for IFD tags
 type IfdId  uint
 const (
     PRIMARY IfdId = iota    // namespace for IFD0, first (TIFF) IFD
     THUMBNAIL               // namespace for IFD1 (Thumbnail) pointed to by IFD0
-
     EXIF                    // EXIF namespace, embedded in IFD0
     GPS                     // GPS namespace, embedded in IFD0 
-
     IOP                     // Interoperability namespace, embedded in EXIF IFD
-
     MAKER                   // non-standard IFD for each maker, embedded in EXIF IFD
     EMBEDDED                // possible non-standard IFD embedded in MAKER
-
     _IFD_N                  // last entry + 1 to size arrays
 )
 
 type ThumbnailInfo struct {
-    Origin  string          // either "Thumbnail" or "Maker Note Embedded"
+    Origin  IfdId           // either THUMBNAIL or EMBEDDED
     Comp    Compression     // type of image compression
     Size    uint32          // image size
 }
@@ -497,12 +493,15 @@ func newDesc( data []byte, c *Control ) *Desc {
 //
 // It takes a byte slice as input (data), a starting offset in that slice
 // (start) and the following number of bytes (dLen) that contains the exif
-// metadata: an EXIF header is expected at the starting offset and the whole
-// metadata must fit in the following number of bytes. If the metadata size
-// is unknown, dLen can be given as 0, in which case parsing will use the rest
-// of the input slice.
+// metadata.
 //
-// It returns the descriptor in case of success or an error in case of failure.
+// An EXIF header is expected at the starting offset and the whole metadata
+// must fit in the following number of bytes. If the metadata size is unknown,
+// dLen can be given as 0, in which case parsing will use the rest of the input
+// slice.
+//
+// It returns the descriptor in case of success or a non-nil error in case of
+// failure.
 func Parse( data []byte, start, dLen int, ec *Control ) (*Desc, error) {
     if ! bytes.Equal( data[start:start+6], []byte( "Exif\x00\x00" ) ) {
         return nil, fmt.Errorf( "exif: invalid signature (%s)\n",
@@ -546,7 +545,7 @@ func init() {
 // Search looks up for the EXIF header in memory. It takes a source data slice
 // and a start offset in that slice. If the EXIF header is found it returns the
 // slice starting at the EXIF header, till the end of the original data slice.
-// Otherwise it returns an error. 
+// Otherwise it returns a non-nil error.
 //
 // It implements the bitap (or shift-Or) algorithm to quickly find the exif
 // header. Exif header is 6-byte long ("Exif\x0\x0") and requires only a 6-bit
@@ -567,9 +566,10 @@ func Search( data []byte, start int ) ([]byte, error) {
 }
 
 // Read the file whose path name is given and parse the data.
-// It takes the path name (path), a starting offset in that file.
+//
+// It takes the path name (path) and a starting offset in that file.
 // It searches for the EXIF header from that starting offset, which
-// can therefore be given as 0 if it is unknown.
+// should therefore be given as 0 if it is unknown.
 //
 // It returns an exif descriptor in case of success or an error in
 // case of failure.
@@ -585,8 +585,11 @@ func Read( path string, start int, ec *Control ) (*Desc, error) {
     return Parse( data, 0, len(data), ec )
 }
 
-// Write the parsed EXIF metadata into a file. It returns the number of bytes
-// written in the file in case of success or an error in case of failure.
+// Write the parsed EXIF metadata into a file.
+// The argument path gives the path of the new file to write.
+//
+// It returns the number of bytes written in the file in case of success
+// or a non-nil error in case of failure.
 func (d *Desc)Write( path string ) (int, error) {
 
     f, err := os.OpenFile( path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.ModePerm)
@@ -597,10 +600,11 @@ func (d *Desc)Write( path string ) (int, error) {
     return d.serialize( f )
 }
 
-// WriteOriginal writes the original exif metadata into a new seperate file
+// WriteOriginal writes the original EXIF metadata into a new seperate file.
 // The argument path gives the path of the new file to write.
+//
 // If succesful, it returns the number of bytes written, otherwise it returns
-// a non nil error.
+// a non-nil error.
 func (d *Desc)WriteOriginal( path string ) (n int, err error) {
 
     var f *os.File
@@ -617,17 +621,21 @@ func (d *Desc)WriteOriginal( path string ) (n int, err error) {
     return
 }
 
-// WriteThumbnail writes the thumbnail data into a new seperate file
+// WriteThumbnail writes the thumbnail data into a new seperate file.
+//
 // The argument path gives the path of the new file to write.
 // The argument from gives the id of the ifd that provides the thumbnail.
+//
 // As long as an ifd referred by the id exists, thumbnail information is
-// retrived and if the thumbnail is not empty it is written to the file.
+// retrieved and if the thumbnail is not empty it is written to the file.
+//
 // Actually any existing ifd in [ exif.PRIMARY, exif.THUMBNAIL, exif.EXIF,
 // exif.GPS, exif.IOP ] will return the exif thumbnail (if it exists),
 // while any existing ifd in [ exif.MAKER, exif.EMBEDDED] will return the
 // maker thumbnail (or preview image) if it exists.
+//
 // If succesful, it returns the number of bytes written, otherwise it returns
-// a non nil error.
+// a non-nil error.
 func (d *Desc)WriteThumbnail( path string, from IfdId ) (int, error) {
 
     var ifd *ifdd
@@ -664,7 +672,7 @@ func (d *Desc)GetThumbnailInfo() (ti []ThumbnailInfo) {
     if tOffset != 0 {
         tLen, _ := d.global["thumbLen"].(uint32)
         tType, _ := d.global["thumbType"].(Compression)
-        ti = append( ti, ThumbnailInfo{ "Thumbnail", tType, tLen } )
+        ti = append( ti, ThumbnailInfo{ THUMBNAIL, tType, tLen } )
     }
 
     // lookup for EMBEDDED IfID:
@@ -675,7 +683,7 @@ func (d *Desc)GetThumbnailInfo() (ti []ThumbnailInfo) {
             if tOffset != 0 {
                 tLen, _ := ifd.desc.global["thumbLen"].(uint32)
                 tType, _ := ifd.desc.global["thumbType"].(Compression)
-                ti = append( ti, ThumbnailInfo{ "Maker Note Embedded", tType, tLen } )
+                ti = append( ti, ThumbnailInfo{ EMBEDDED, tType, tLen } )
             }
             break
         }
@@ -683,10 +691,10 @@ func (d *Desc)GetThumbnailInfo() (ti []ThumbnailInfo) {
     return
 }
 
-// Write formatted IFDs on the passed io.Writer argument w
-// if w is nil, os.Stdout is used
-// The IFDs to format are given by their IDs in the slice argument ifdIds
-// Possible ID values are: PRIMARY, THUMBNAIL, EXIF, GPS, IOP, MAKER & EMBEDDED
+// Write formatted IFDs.
+// The argument w is the io.Writer to use (e.g. os.File). If w is nil, os.Stdout
+// is used instead. The IFDs to format are given by their IDs in the slice argument
+// ifdIds. Possible ID values are: PRIMARY, THUMBNAIL, EXIF, GPS, IOP, MAKER & EMBEDDED
 func (d *Desc)Format( w io.Writer, ifdIds []IfdId ) error {
     if w == nil {
         w = os.Stdout
