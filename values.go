@@ -71,6 +71,9 @@ type serializer interface {
 
 // implement tag specific formated print of the value
     format( w io.Writer )
+
+// return tag of the value
+    getTag( ) tTag
 }
 
 // All ifd.get<type> functions ignore the actual entry type and read <count> 
@@ -244,6 +247,10 @@ type tVal struct {
             tEntry      // common entry structure
 }
 
+func (tv *tVal)getTag( ) tTag {
+    return tv.vTag
+}
+
 // TIFF Value definitions
 
 type descValue struct {     // used for some maker notes
@@ -262,6 +269,7 @@ func (ifd *ifdd) newDescValue( dVal *Desc, header string,
 //  dv.vCount will be calculated when serializeEntry is called
     dv.header = header
     dv.v = dVal
+    dVal.root.pValue = dv
     return
 }
 
@@ -332,9 +340,14 @@ func (ifd *ifdd) newIfdValue( ifdVal *ifdd ) (iv *ifdValue) {
     iv.vType = ifd.fType
     iv.vCount = 1
     iv.v = ifdVal
+    ifdVal.pValue = iv
     return
 }
 func (iv *ifdValue) serializeEntry( w io.Writer ) (err error) {
+    if iv == nil {
+        panic("serializeEntry: nill entry")
+    }
+
     if err = binary.Write( w, iv.ifd.desc.endian, iv.tVal.tEntry ); err != nil {
         return
     }
@@ -363,6 +376,10 @@ func (iv *ifdValue) serializeEntry( w io.Writer ) (err error) {
     return
 }
 func (iv *ifdValue)serializeData( w io.Writer ) (err error) {
+    if iv == nil {
+        panic("serializeData: nill entry")
+
+    }
     if iv.ifd.desc.SrlzDbg {
         fmt.Printf( "%s ifd Serialize in data whole %s ifd @offset %#08x\n",
                     GetIfdName(iv.ifd.id), GetIfdName(iv.v.id), iv.ifd.dOffset )

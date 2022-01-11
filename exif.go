@@ -1,4 +1,16 @@
 // support for EXIF metadata parsing, removing and serializing
+//
+// EXIFF metadata are usually embedded in pictures, such as JPEG files and
+// provide information such as date, location and what camera was used.
+//
+// Before sharing a picture it might be necessary to remove some metadata
+// that could reveal personal information. This library allows checking what
+// metadata is available in a picture, removing some of those metadata and
+// re-writing the resulting set of metadata.
+//
+// Part of the metadata are from the camera manufacturer, in the form of Maker
+// notes. In this version, only a subset of Apple and Nikon maker notes are
+// supported
 package exif
 
 import (
@@ -324,6 +336,9 @@ func (d *Desc) checkValidTiff( ) (uint32, error) {
 type ifdd struct {
     id      IfdId           // namespace for each IFD
     desc    *Desc           // parent document descriptor
+    pValue  serializer      // parent value in case of embedded ifd or desc
+
+
     values  []serializer    // stored IFD content
 
     dOffset uint32          // current offset in data-area during serializing
@@ -463,6 +478,135 @@ func dumpData(w io.Writer,  header, indent string, noLf bool, data []byte ) {
             fmt.Fprintf( w, "%s\n", b.String() )
         }
     }
+}
+
+func (ifd *ifdd)removeTag( tag tTag ) {
+    for i, v := range( ifd.values ) {
+        if v != nil {
+            t := v.getTag()
+            if t == tag {
+//                fmt.Printf( "removeTag: found tag %d @ entry %d in ifd %s (%d)\n",
+//                            tag, i, GetIfdName(ifd.id), ifd.id )
+                ifd.values[i] = nil
+                return
+            }
+        }
+    }
+    if ifd.desc.Warn {
+        fmt.Printf( "removeTag: missing tag %d in ifd %s (%d)\n",
+                    tag, GetIfdName(ifd.id), ifd.id )
+    }
+}
+
+// Remove tag from the list of entries in the specified ifd. Since ifds act as
+// namespace, the same tag value can appear in multiple ifds, and the ifd id is
+// necessary to uniquely identify a tag.
+//
+// The argument id indicates the enclosing ifd and the argument tag specifies
+// the tag to remove. Errors are returned in case of invalid ifds ids and out-
+// of-range tags (>0xffff). If the ifd id is not present an error is returned,
+// but if the tag is not found it is just ignored.
+//
+// Removing a tag can make the enclosing ifd meaningless. Some tags come in
+// couples, like _JPEGInterchangeFormat and _JPEGInterchangeFormatLength and
+// must always be both removed even if only one is specified. This case is
+// handled here, but other possible similar cases, in maker notes for example,
+// are not.
+func (d *Desc)RemoveTag( id IfdId, tag uint ) error {
+    if id >= _IFD_N {
+        return fmt.Errorf( "RemoveTag: id %d is not valid for an ifd\n", id )
+    }
+    ifd := d.ifds[id]
+    if ifd == nil {
+        return fmt.Errorf( "RemoveTag: ifd %d is not present\n", id )
+    }
+    if tag >0xffff {
+        return fmt.Errorf( "RemoveTag: tag %d is out of range\n", tag )
+    }
+    eTag := tTag(tag)
+    ifd.removeTag( eTag )
+
+    // special cases for JPEGInterchangeFormat/Length
+    if id == PRIMARY || id == THUMBNAIL || id == EMBEDDED {
+        if eTag == _JPEGInterchangeFormat {
+            eTag = _JPEGInterchangeFormatLength
+        } else if eTag == _JPEGInterchangeFormatLength {
+            eTag = _JPEGInterchangeFormat
+        } else {
+            eTag = 0
+        }
+        if eTag != 0 {
+            ifd.removeTag( eTag )
+         }
+    }
+    return nil
+}
+
+func removeVal( val serializer) {
+    if ifdVal, ok := val.(*ifdValue); ok == true {
+        ifd := ifdVal.ifd
+        for i, v := range( ifd.values ) {
+            if iv, ok := v.(*ifdValue); ok == true {
+                if iv == ifdVal {
+//                    fmt.Printf( "Found Ifd value at index %d in parent ifd id %d\n",
+//                                i, ifd.id )
+                    ifd.values[i] = nil
+                    return
+                }
+            }
+        }
+    } else if descVal, ok := val.(*descValue); ok == true {
+        ifd := descVal.ifd
+        for i, v := range( ifd.values ) {
+            if dv, ok := v.(*descValue); ok == true {
+                if dv == descVal {
+//                    fmt.Printf( "Found Desc value at index %d in parent ifd id %d\n",
+//                                i, ifd.id )
+                    ifd.values[i] = nil
+                    return
+                }
+            }
+        }
+    }
+    panic( "removeVal: value not found\n")
+}
+
+// Remove ifd from the list of parsed ones. Call to Write afterwards will not
+// include this ifd in the metadata.
+//
+// The argument id indicates the ifd to remove. Removing the PRIMARY ifd is not
+// possible and is treated as an error.
+//
+// Beware that removing an IFD removes all embedded IFDs and any embedded
+// thumbnail as well.
+func (d *Desc)RemoveIfd( id IfdId ) error {
+    if id >= _IFD_N {
+        return fmt.Errorf( "RemoveIfd: id %d is not valid for an ifd\n", id )
+    }
+    if id == PRIMARY {
+        return fmt.Errorf( "RemoveIfd: removing ifd PRIMARY is not possible\n")
+    }
+
+    ifd := d.ifds[id]
+    if ifd == nil {
+        return fmt.Errorf( "RemoveIfd: ifd %d is not present\n", id )
+    }
+
+    // 1. remove entry in parent ifd, if any
+    if pVal := ifd.pValue; pVal != nil {
+        removeVal( pVal )
+    }
+
+    // 2. remove ifd from the desc main Desc chain, if any
+    chain := d.ifds[PRIMARY]
+    if chain.next != nil && chain.next == ifd {
+        chain.next = nil
+    }
+
+    // 3. remove ifd in ifid ids in main Desc
+    d.ifds[id] = nil
+
+    return nil
 }
 
 func getEndianess( data []byte ) ( endian binary.ByteOrder, err error ) {
@@ -695,25 +839,25 @@ func (d *Desc)GetThumbnailInfo() (ti []ThumbnailInfo) {
 // The argument w is the io.Writer to use (e.g. os.File). If w is nil, os.Stdout
 // is used instead. The IFDs to format are given by their IDs in the slice argument
 // ifdIds. Possible ID values are: PRIMARY, THUMBNAIL, EXIF, GPS, IOP, MAKER & EMBEDDED
-func (d *Desc)Format( w io.Writer, ifdIds []IfdId ) error {
+func (d *Desc)FormatIfds( w io.Writer, ifdIds []IfdId ) error {
     if w == nil {
         w = os.Stdout
     }
-    fmt.Fprintf( w, "Picture Metadata:\n" )
-    for i := 0; i < len(ifdIds); i++ {
-        id := ifdIds[i]
-        if /*id >= PRIMARY &&(*/ id < _IFD_N {
+    fmt.Fprintf( w, "Picture Metadata:\n\n" )
+    for _, id := range ifdIds {
+        if id < _IFD_N {
             ifd := d.ifds[id]
             if ifd != nil {
                 fmt.Fprintf( w, "--- %s IFD (id %d)\n", ifdNames[id], id )
                 ifd.format( w )
             } else {
                 if d.Warn {
-                    fmt.Fprintf( w, "--- %s IFD (id %d) is absent\n", ifdNames[id], id )
+                    fmt.Printf( "--- %s IFD (id %d) is absent\n", ifdNames[id], id )
                 }
             }
+        } else {
+            return fmt.Errorf( "FormatIfds: id %d is not valid for an ifd\n", id )
         }
     }
     return nil
 }
-

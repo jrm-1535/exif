@@ -62,20 +62,28 @@ func (d *Desc)serialize( w io.Writer ) (written int, err error) {
     return
 }
 
-func (ifd *ifdd)setDataAreaStart( origin uint32 ) {
+func (ifd *ifdd)setDataAreaStart( origin uint32 ) (nEntries uint32 ){
     if origin & 1 == 1 {
         panic( fmt.Sprintf(
                 "setDataAreaStart: origin is not aligned on 2-byte boundaries: %#08x\n",
                 origin ) )
     }
+
+    // since some entries may have been removed after parsing, calculate and
+    // return the actual number of entries that will be written.
+    for _, val := range ifd.values {
+        if val != nil { nEntries ++ }
+    }
+
     // calculate where data area starts
-     ifd.dOffset = origin + _ShortSize +     // number of IFD entries
-                  (uint32(len(ifd.values)) * _IfdEntrySize) +
-                  _LongSize                 // next IFD offset
+    ifd.dOffset = origin + _ShortSize +         // number of IFD entries
+                  (nEntries * _IfdEntrySize) +  // actual entries
+                  _LongSize                     // next IFD offset
+    return
 }
 
 func (ifd *ifdd)serializeEntries( w io.Writer, offset uint32 ) (uint32, error) {
-    ifd.setDataAreaStart( offset )
+    nEntries := ifd.setDataAreaStart( offset )
     endian := ifd.desc.endian
     written := uint32(0)
 
@@ -84,7 +92,7 @@ func (ifd *ifdd)serializeEntries( w io.Writer, offset uint32 ) (uint32, error) {
                     GetIfdName(ifd.id), len(ifd.values), offset, ifd.dOffset )
     }
     // write number of entries first as an _UnsignedShort
-    err := binary.Write( w, endian, uint16(len(ifd.values)) )
+    err := binary.Write( w, endian, uint16(nEntries) )
     if err != nil {
         return written, err
     }
@@ -92,6 +100,13 @@ func (ifd *ifdd)serializeEntries( w io.Writer, offset uint32 ) (uint32, error) {
 
     // Write fixed size entries, including in-place values
     for i := 0; i < len(ifd.values); i++ {
+        if ifd.values[i] == nil {   // removed entries must be ignored
+            if ifd.desc.SrlzDbg {
+                fmt.Printf( "%s ifd serializeEntry %d skipping empty entry\n",
+                            GetIfdName(ifd.id), i )
+            }
+            continue
+        }
         err = ifd.values[i].serializeEntry( w )
         if err != nil {
             err = fmt.Errorf( "%s ifd serializeEntry %d: %v\n",
@@ -128,6 +143,13 @@ func (ifd *ifdd)serializeDataArea( w io.Writer, origin uint32 ) (uint32, error) 
 
     // Write variable size values, excluding in-place values
     for i := 0; i < len(ifd.values); i++ {
+        if ifd.values[i] == nil {   // removed entries must be ignored
+            if ifd.desc.SrlzDbg {
+                fmt.Printf( "%s ifd serializeDataArea %d skipping empty entry\n",
+                            GetIfdName(ifd.id), i )
+            }
+            continue
+        }
         err = ifd.values[i].serializeData( w )
         if err != nil {
             err = fmt.Errorf( "%s ifd serializeDataArea for entry %d: %v\n",
