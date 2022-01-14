@@ -2,15 +2,20 @@ package exif
 
 import (
     "fmt"
-//    "bytes"
-//    "strings"
     "encoding/binary"
     "io"
 )
 
-// Serialize Desc
+// Serialize the parsed EXIF metadata, including all current IFDs.
+// The argument w is the io.Writer to use.
+//
+// It returns the number of bytes written in case of success or a non-nil error
+// in case of failure.
+func (d *Desc)Serialize( w io.Writer ) (written int, err error) {
 
-func (d *Desc)serialize( w io.Writer ) (written int, err error) {
+    if d.root == nil {
+        return 0, fmt.Errorf( "Serialize: empty descriptor\n" )
+    }
 
     if written, err = w.Write( []byte( "Exif\x00\x00" ) ); err != nil {
         return

@@ -106,8 +106,8 @@ func GetCompressionName( c Compression ) string {
 // Control Unknown Tag bitMask
 type ConUnTag uint
 const (
-    Keep ConUnTag = iota    // Keep unknown tag and metadata
-    Remove                  // Remove tag and metadata
+    KeepTag ConUnTag = iota // Keep unknown tag and metadata
+    RemoveTag               // Remove tag and metadata
     Stop                    // Stop in error at first unknown tag
 )
 
@@ -429,7 +429,7 @@ type ifdd struct {
 */
 
 func (ifd *ifdd) processPadding( ) error {
-    if 0 == ifd.desc.Unknown & Remove {
+    if 0 == ifd.desc.Unknown & RemoveTag {
         return ifd.storeAnyUnknownSilently( )
     }
     return nil
@@ -445,7 +445,7 @@ func (ifd *ifdd) processUnknownTag( ) error {
         return fmt.Errorf( "%s: storeExifTags: stop at unknown tag %#02x\n",
                            GetIfdName(ifd.id), ifd.fTag )
     }
-    if 0 == ifd.desc.Unknown & Remove {
+    if 0 == ifd.desc.Unknown & RemoveTag {
         return ifd.storeAnyUnknownSilently( )
     }
     return nil
@@ -480,7 +480,7 @@ func dumpData(w io.Writer,  header, indent string, noLf bool, data []byte ) {
     }
 }
 
-func (ifd *ifdd)removeTag( tag tTag ) {
+func (ifd *ifdd)removeIfdTag( tag tTag ) {
     for i, v := range( ifd.values ) {
         if v != nil {
             t := v.getTag()
@@ -498,33 +498,19 @@ func (ifd *ifdd)removeTag( tag tTag ) {
     }
 }
 
-// Remove tag from the list of entries in the specified ifd. Since ifds act as
-// namespace, the same tag value can appear in multiple ifds, and the ifd id is
-// necessary to uniquely identify a tag.
-//
-// The argument id indicates the enclosing ifd and the argument tag specifies
-// the tag to remove. Errors are returned in case of invalid ifds ids and out-
-// of-range tags (>0xffff). If the ifd id is not present an error is returned,
-// but if the tag is not found it is just ignored.
-//
-// Removing a tag can make the enclosing ifd meaningless. Some tags come in
-// couples, like _JPEGInterchangeFormat and _JPEGInterchangeFormatLength and
-// must always be both removed even if only one is specified. This case is
-// handled here, but other possible similar cases, in maker notes for example,
-// are not.
-func (d *Desc)RemoveTag( id IfdId, tag uint ) error {
+func (d *Desc)removeIfdTag( id IfdId, tag uint ) error {
     if id >= _IFD_N {
-        return fmt.Errorf( "RemoveTag: id %d is not valid for an ifd\n", id )
+        return fmt.Errorf( "RemoveIfdTag: id %d is not valid for an ifd\n", id )
     }
     ifd := d.ifds[id]
     if ifd == nil {
-        return fmt.Errorf( "RemoveTag: ifd %d is not present\n", id )
+        return fmt.Errorf( "RemoveIfdTag: ifd %d is not present\n", id )
     }
     if tag >0xffff {
-        return fmt.Errorf( "RemoveTag: tag %d is out of range\n", tag )
+        return fmt.Errorf( "RemoveIfdTag: tag %d is out of range\n", tag )
     }
     eTag := tTag(tag)
-    ifd.removeTag( eTag )
+    ifd.removeIfdTag( eTag )
 
     // special cases for JPEGInterchangeFormat/Length
     if id == PRIMARY || id == THUMBNAIL || id == EMBEDDED {
@@ -536,7 +522,7 @@ func (d *Desc)RemoveTag( id IfdId, tag uint ) error {
             eTag = 0
         }
         if eTag != 0 {
-            ifd.removeTag( eTag )
+            ifd.removeIfdTag( eTag )
          }
     }
     return nil
@@ -571,15 +557,7 @@ func removeVal( val serializer) {
     panic( "removeVal: value not found\n")
 }
 
-// Remove ifd from the list of parsed ones. Call to Write afterwards will not
-// include this ifd in the metadata.
-//
-// The argument id indicates the ifd to remove. Removing the PRIMARY ifd is not
-// possible and is treated as an error.
-//
-// Beware that removing an IFD removes all embedded IFDs and any embedded
-// thumbnail as well.
-func (d *Desc)RemoveIfd( id IfdId ) error {
+func (d *Desc)removeIfd( id IfdId ) error {
     if id >= _IFD_N {
         return fmt.Errorf( "RemoveIfd: id %d is not valid for an ifd\n", id )
     }
@@ -607,6 +585,47 @@ func (d *Desc)RemoveIfd( id IfdId ) error {
     d.ifds[id] = nil
 
     return nil
+}
+
+// Remove tag from the list of entries in the specified ifd. Call to Write
+// afterwards will not include this tag in the metadata. Since ifds act as
+// namespace, the same tag value can appear in multiple ifds, and the ifd id is
+// necessary to uniquely identify a tag.
+//
+// The argument id indicates the enclosing ifd and the argument tag specifies
+// the tag to remove. Errors are returned in case of invalid ifds ids and out-
+// of-range tags (>0x0ffff). If the ifd id is not present an error is returned,
+// but if the tag is not found it is just ignored.
+//
+// If the tag to remove is given as -1, the whole ifd is removed (-1 stands for
+// all tags in the ifd). Beware that removing a whole IFD removes all embedded
+// IFDs and any embedded thumbnail as well, and removing the whole PRIMARY ifd
+// will remove all existing ifds, resulting in an empty metadata descriptor.
+//
+// Removing a tag can make the enclosing ifd meaningless. Some tags come in
+// couples, like _JPEGInterchangeFormat and _JPEGInterchangeFormatLength and
+// must always be both removed even if only one is specified. This case is
+// handled here, but other possible similar cases, in maker notes for example,
+// are not.
+func (d *Desc)Remove( id IfdId, tag int ) (err error) {
+    if id == 0 {        // remove all exif metadata
+        d.root = nil
+        for id := PRIMARY; id < _IFD_N; id ++ {
+            d.ifds[id] = nil
+        }
+        return
+    }
+    if tag < -1 {
+        return fmt.Errorf( "Remove: invalid tag %d\n", tag )
+    }
+    defer func ( ) { if err != nil { err = fmt.Errorf( "Remove: %v", err ) } }()
+
+    if tag == -1 {      // remove the whole ifd
+        err = d.removeIfd( IfdId(id) )
+    } else {
+        err = d.removeIfdTag( IfdId(id), uint(tag) )
+    }
+    return
 }
 
 func getEndianess( data []byte ) ( endian binary.ByteOrder, err error ) {
@@ -646,33 +665,40 @@ func newDesc( data []byte, c *Control ) *Desc {
 //
 // It returns the descriptor in case of success or a non-nil error in case of
 // failure.
-func Parse( data []byte, start, dLen int, ec *Control ) (*Desc, error) {
+func Parse( data []byte, start, dLen uint, ec *Control ) (desc *Desc, err error) {
     if ! bytes.Equal( data[start:start+6], []byte( "Exif\x00\x00" ) ) {
-        return nil, fmt.Errorf( "exif: invalid signature (%s)\n",
+        return nil, fmt.Errorf( "Parse: invalid signature (%s)\n",
                                 string(data[0:6]) )
     }
+
     // Exif\0\0 is followed immediately by TIFF header
     d := newDesc( data[start+_originOffset:start+dLen-_originOffset], ec )
-    var err error
+    defer func ( ) {
+        if err != nil {
+            err = fmt.Errorf( "Parse: %v", err )
+        } else {
+            desc = d
+        }
+    }()
+
     d.endian, err = getEndianess( d.data )
     if err != nil {
-        return nil, err
+        return
     }
-    offset, err := d.checkValidTiff( )
+
+    var offset uint32
+    offset, err = d.checkValidTiff( )
     if err != nil {
-        return nil, err
+        return
     }
     offset, d.root, err = d.storeIFD( PRIMARY, offset, storeTiffTags )
     if err != nil {
-        return nil, err
+        return
     }
     if offset != 0 {
         _, d.root.next, err = d.storeIFD( THUMBNAIL, offset, storeTiffTags )
-        if err != nil {
-            return nil, err
-        }
     }
-    return d, nil
+    return
 }
 
 var masks [256]byte
@@ -695,10 +721,10 @@ func init() {
 // header. Exif header is 6-byte long ("Exif\x0\x0") and requires only a 6-bit
 // position mask. It uses a 256-byte mask array, which is is likely to stay in
 // cache, and a bitmask that fits in a register. The time complexity is O(n).
-func Search( data []byte, start int ) ([]byte, error) {
+func Search( data []byte, start uint ) ([]byte, error) {
 
     bitMask := byte(0xfe)
-    for i:= start; i < len(data); i++ {
+    for i:= int(start); i < len(data); i++ {
         bitMask |= masks[data[i]]
         bitMask <<= 1
         if 0 == bitMask & 64 {
@@ -706,7 +732,7 @@ func Search( data []byte, start int ) ([]byte, error) {
             return data[i-5:], nil
         }
     }
-    return data[0:0], fmt.Errorf("search: did not find Exif header in data\n")
+    return nil, fmt.Errorf("search: did not find Exif header in data\n")
 }
 
 // Read the file whose path name is given and parse the data.
@@ -717,16 +743,22 @@ func Search( data []byte, start int ) ([]byte, error) {
 //
 // It returns an exif descriptor in case of success or an error in
 // case of failure.
-func Read( path string, start int, ec *Control ) (*Desc, error) {
-    data, err := ioutil.ReadFile( path )
+func Read( path string, start uint, ec *Control ) (d *Desc, err error) {
+    defer func ( ) {
+        if err != nil { err = fmt.Errorf( "Read: %v", err ) }
+    }()
+
+    var data []byte
+    data, err = ioutil.ReadFile( path )
     if err != nil {
-        return nil, err
+        return
     }
     data, err = Search( data, start )
     if err != nil {
-        return nil, err
+        return
     }
-    return Parse( data, 0, len(data), ec )
+    d, err = Parse( data, 0, uint(len(data)), ec )
+    return
 }
 
 // Write the parsed EXIF metadata into a file.
@@ -734,35 +766,83 @@ func Read( path string, start int, ec *Control ) (*Desc, error) {
 //
 // It returns the number of bytes written in the file in case of success
 // or a non-nil error in case of failure.
-func (d *Desc)Write( path string ) (int, error) {
+func (d *Desc)Write( path string ) (n int, err error) {
 
-    f, err := os.OpenFile( path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.ModePerm)
+    defer func ( ) {
+        if err != nil { err = fmt.Errorf( "Write: %v", err ) }
+    }()
+
+    var f *os.File
+    f, err = os.OpenFile( path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.ModePerm)
     if err != nil {
-        return 0, err
+        return
     }
-    defer f.Close()
-    return d.serialize( f )
+    defer func ( ) { if e := f.Close(); err == nil { err = e } }()
+    n, err = d.Serialize( f )
+    return
 }
 
 // WriteOriginal writes the original EXIF metadata into a new seperate file.
 // The argument path gives the path of the new file to write.
 //
+// This useful if the file that was parsed included the EXIF metadata along
+// with other data, such as in a JPEG file.
+//
 // If succesful, it returns the number of bytes written, otherwise it returns
 // a non-nil error.
 func (d *Desc)WriteOriginal( path string ) (n int, err error) {
 
+    defer func ( ) {
+        if err != nil { err = fmt.Errorf( "WriteOriginal: %v", err ) }
+    }()
     var f *os.File
     f, err = os.OpenFile( path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.ModePerm)
-    if err == nil {
-        defer f.Close()
-        n, err = f.Write( []byte( "Exif\x00\x00" ) )
-        if err == nil {
-            var written int
-            written, err = f.Write( d.data[0:d.dataEnd] )
-            n += written
-        }
+    if err != nil {
+        return
     }
+
+    defer func ( ) { if e := f.Close(); err == nil { err =e  } }()
+    n, err = f.Write( []byte( "Exif\x00\x00" ) )
+    if err != nil {
+        return
+    }
+    var written int
+    written, err = f.Write( d.data[0:d.dataEnd] )
+    n += written
     return
+}
+
+// GetThumnailData
+// The argument id gives the id of the ifd that provides the thumbnail.
+//
+// As long as an ifd referred by the id exists, associated thumbnail
+// information is retrieved and if the thumbnail size is not 0, it is
+// returned as a byte slice.
+//
+// Actually any existing ifd in [ exif.PRIMARY, exif.THUMBNAIL, exif.EXIF,
+// exif.GPS, exif.IOP ] will return the exif thumbnail (if it exists),
+// while any existing ifd in [ exif.MAKER, exif.EMBEDDED] will return the
+// maker thumbnail (or preview image) if it exists.
+func (d *Desc)GetThumbnailData( id IfdId ) ([]byte, error) {
+    var ifd *ifdd
+// First locate the ifd in the main descriptor ifd list, then use the ifd 
+// parent desc as the source of thumbnail data (EMBEDDED IFD has a different
+// desc and different data origin).
+    if id < _IFD_N {
+        ifd = d.ifds[id]
+    }
+    if ifd == nil {
+        return nil, fmt.Errorf( "ifd %d not found\n", id )
+    }
+    tOffset, _ := ifd.desc.global["thumbOffset"].(uint32)
+    if tOffset == 0 {
+        return nil, fmt.Errorf( "thumbnail not found in ifd %d\n", id )
+    }
+    tLen, _ := ifd.desc.global["thumbLen"].(uint32)
+    if tLen == 0 {
+        return nil, fmt.Errorf( "empty thumbnail found in ifd %d\n", id )
+    }
+    return ifd.desc.data[tOffset:tOffset+tLen], nil
 }
 
 // WriteThumbnail writes the thumbnail data into a new seperate file.
@@ -774,36 +854,30 @@ func (d *Desc)WriteOriginal( path string ) (n int, err error) {
 // retrieved and if the thumbnail is not empty it is written to the file.
 //
 // Actually any existing ifd in [ exif.PRIMARY, exif.THUMBNAIL, exif.EXIF,
-// exif.GPS, exif.IOP ] will return the exif thumbnail (if it exists),
-// while any existing ifd in [ exif.MAKER, exif.EMBEDDED] will return the
+// exif.GPS, exif.IOP ] will write the exif thumbnail (if it exists),
+// while any existing ifd in [ exif.MAKER, exif.EMBEDDED] will write the
 // maker thumbnail (or preview image) if it exists.
 //
 // If succesful, it returns the number of bytes written, otherwise it returns
 // a non-nil error.
-func (d *Desc)WriteThumbnail( path string, from IfdId ) (int, error) {
+func (d *Desc)WriteThumbnail( path string, from IfdId ) (n int, err error) {
 
-    var ifd *ifdd
-    if from < _IFD_N {
-        ifd = d.ifds[from]
-    }
-    if ifd == nil {
-        return 0, fmt.Errorf( "WriteThumbail: ifd %d not found\n", from )
-    }
-    tOffset, _ := ifd.desc.global["thumbOffset"].(uint32)
-    if tOffset == 0 {
-        return 0, fmt.Errorf( "WriteThumbail: thumbnail not found in ifd %d\n", from )
-    }
-    tLen, _ := ifd.desc.global["thumbLen"].(uint32)
-    if tLen == 0 {
-        return 0, fmt.Errorf( "WriteThumbail: empty thumbnail found in ifd %d\n", from )
+    defer func ( ) {
+        if err != nil { err = fmt.Errorf(  "WriteThumbail: %v", err ) }
+    }()
+
+    var data []byte
+    data, err = d.GetThumbnailData( from ); if err != nil {
+        return
     }
 
-    f, err := os.OpenFile( path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.ModePerm)
+    var f *os.File
+    f, err = os.OpenFile( path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.ModePerm)
     if err != nil {
-        return 0, err
+        return
     }
-    defer f.Close()
-    return f.Write( ifd.desc.data[tOffset:tOffset+tLen] )
+    defer func ( ) { if e := f.Close(); err == nil { err = e } }()
+    return f.Write( data )
 }
 
 // GetThumbnailInfo returns information about all possible thumbnails.
@@ -835,10 +909,35 @@ func (d *Desc)GetThumbnailInfo() (ti []ThumbnailInfo) {
     return
 }
 
-// Write formatted IFDs.
+// Format all existing IDs
+// The argument w is the io.Writer to use (e.g. os.File or). If w is nil,
+// os.Stdout is used instead.
+//
+// It returns always a nil error.
+func (d *Desc)Format( w io.Writer) error {
+    if w == nil {
+        w = os.Stdout
+    }
+    fmt.Fprintf( w, "------ Picture Metadata:\n\n" )
+    for id:= PRIMARY; id < _IFD_N; id++ {
+        ifd := d.ifds[id]
+        if ifd != nil {
+            fmt.Fprintf( w, "--- %s IFD (id %d)\n", ifdNames[id], id )
+            ifd.format( w )
+        }
+    }
+    fmt.Fprintf( w, "------\n" )
+    return nil
+}
+
+// Format IFDs.
 // The argument w is the io.Writer to use (e.g. os.File). If w is nil, os.Stdout
 // is used instead. The IFDs to format are given by their IDs in the slice argument
 // ifdIds. Possible ID values are: PRIMARY, THUMBNAIL, EXIF, GPS, IOP, MAKER & EMBEDDED
+//
+// it returns a non-nil error if one ifd in the slice is not in the range of valid
+// IFD IDs. In an IFD is not present in the metadata it silently skips it, unless
+// the flasg Warn is set, in which case it prints the name of the missing IFD.
 func (d *Desc)FormatIfds( w io.Writer, ifdIds []IfdId ) error {
     if w == nil {
         w = os.Stdout
