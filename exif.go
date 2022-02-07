@@ -909,25 +909,62 @@ func (d *Desc)GetThumbnailInfo() (ti []ThumbnailInfo) {
     return
 }
 
+type cumulativeWriter struct {
+    w       io.Writer
+    count   int
+    err     error
+}
+func newCumulativeWriter( w io.Writer ) *cumulativeWriter {
+    cw := new( cumulativeWriter )
+    cw.w = w
+    return cw
+}
+func (cw *cumulativeWriter)format( f string, a ...interface{} ) {
+    if cw.err != nil {
+        return
+    }
+    n, err := fmt.Fprintf( cw.w, f, a... )
+    cw.err = err
+    cw.count += n
+}
+func (cw *cumulativeWriter)setError( err error ) {
+    cw.err = err
+}
+func (cw *cumulativeWriter)Write( v []byte ) (n int, err error) {
+    // implements Writer interface for use with fmt.Fprintf( cw, ... )
+    if cw.err != nil {
+        return 0, cw.err
+    }
+    n, err = cw.w.Write( v )
+    cw.err = err
+    cw.count += n
+    return
+}
+func (cw *cumulativeWriter)result( ) (int, error) {
+    return cw.count, cw.err
+}
+
 // Format all existing IDs
 // The argument w is the io.Writer to use (e.g. os.File or). If w is nil,
 // os.Stdout is used instead.
 //
-// It returns always a nil error.
-func (d *Desc)Format( w io.Writer) error {
+// It returns the number of bytes written and any write error encountered.
+func (d *Desc)Format( w io.Writer) (n int, err error) {
     if w == nil {
         w = os.Stdout
     }
-    fmt.Fprintf( w, "------ Picture Metadata:\n\n" )
+    cw := newCumulativeWriter( w )
+    cw.format( "------ Picture Metadata:\n\n" )
     for id:= PRIMARY; id < _IFD_N; id++ {
         ifd := d.ifds[id]
         if ifd != nil {
-            fmt.Fprintf( w, "--- %s IFD (id %d)\n", ifdNames[id], id )
-            ifd.format( w )
+            cw.format( "--- %s IFD (id %d)\n", ifdNames[id], id )
+            ifd.format( cw )
         }
     }
-    fmt.Fprintf( w, "------\n" )
-    return nil
+    cw.format( "------\n" )
+    n, err = cw.result()
+    return
 }
 
 // Format IFDs.
@@ -938,25 +975,27 @@ func (d *Desc)Format( w io.Writer) error {
 // it returns a non-nil error if one ifd in the slice is not in the range of valid
 // IFD IDs. In an IFD is not present in the metadata it silently skips it, unless
 // the flasg Warn is set, in which case it prints the name of the missing IFD.
-func (d *Desc)FormatIfds( w io.Writer, ifdIds []IfdId ) error {
+func (d *Desc)FormatIfds( w io.Writer, ifdIds []IfdId ) (n int, err error) {
     if w == nil {
         w = os.Stdout
     }
-    fmt.Fprintf( w, "Picture Metadata:\n\n" )
+    cw := newCumulativeWriter( w )
+    cw.format( "Picture Metadata:\n\n" )
     for _, id := range ifdIds {
-        if id < _IFD_N {
-            ifd := d.ifds[id]
-            if ifd != nil {
-                fmt.Fprintf( w, "--- %s IFD (id %d)\n", ifdNames[id], id )
-                ifd.format( w )
-            } else {
-                if d.Warn {
-                    fmt.Printf( "--- %s IFD (id %d) is absent\n", ifdNames[id], id )
-                }
-            }
+        if id >= _IFD_N {
+            cw.setError( fmt.Errorf( "FormatIfds: id %d is not valid for an ifd\n", id ) )
+            break
+        }
+        ifd := d.ifds[id]
+        if ifd != nil {
+            cw.format( "--- %s IFD (id %d)\n", ifdNames[id], id )
+            ifd.format( cw )
         } else {
-            return fmt.Errorf( "FormatIfds: id %d is not valid for an ifd\n", id )
+            if d.Warn {
+                fmt.Printf( "--- %s IFD (id %d) is absent\n", ifdNames[id], id )
+            }
         }
     }
-    return nil
+    n, err = cw.result()
+    return
 }

@@ -14,7 +14,8 @@ import (
 func (d *Desc)Serialize( w io.Writer ) (written int, err error) {
 
     if d.root == nil {
-        return 0, fmt.Errorf( "Serialize: empty descriptor\n" )
+        return 0, nil // ifd0 was removed - empty metadata
+// fmt.Errorf( "Serialize: empty descriptor\n" )
     }
 
     if written, err = w.Write( []byte( "Exif\x00\x00" ) ); err != nil {
