@@ -104,6 +104,22 @@ const (                                     // PRIMARY & THUMBNAIL IFD tags
     _Padding                    = 0xea1c    // May be used in IFD0, IFD1 and Exif IFD?
 )
 
+func (ifd *ifdd) storeTiffImageSize( name string ) error {
+    switch ifd.fType {
+        case _UnsignedShort:
+            return ifd.storeUnsignedShorts( name, 1,
+                    func ( w io.Writer, v interface{}, indent string ) {
+                        iw := v.([]uint16)
+                        fmt.Fprintf( w, "%d Pixels", iw[0] ) } )
+        case _UnsignedLong:
+            return ifd.storeUnsignedLongs( name, 1,
+                    func ( w io.Writer, v interface{}, indent string ) {
+                        iw := v.([]uint32)
+                        fmt.Fprintf( w, "%d Pixels", iw[0] ) } )
+    }
+    return fmt.Errorf( "Illegal Image Width type %s\n", getTiffTString( ifd.fType ) )
+}
+
 func (ifd *ifdd) storeTiffCompression( ) error {
 /*
     Exif2-2: optional in Primary IFD and in thumbnail IFD
@@ -164,9 +180,64 @@ When thumbnails use JPEG compression, this tag value is set to 6.
     return err
 }
 
+func (ifd *ifdd) storeTiffPhotometricInterpretation( ) error {
+    fpi := func( w io.Writer, v interface{}, indent string ) {
+        pi := v.([]uint16)
+        var iType string
+        switch pi[0]  {
+        case 0:
+            iType = "Bilevel or Gray-scale, white is 0"
+        case 1:
+            iType = "Bilevel or Gray-scale, black is 0"
+        case 2:
+            iType = "RGB"
+        case 3:
+            iType = "Palette"
+        default:
+            iType = "Unknown color type"
+        }
+        fmt.Fprintf( w, "Image color is %s", iType )
+    }
+    return ifd.storeUnsignedShorts( "Photometric Interpretation", 1, fpi )
+}
+
+func (ifd *ifdd) storeTiffFillOrder( ) error {
+    ffo := func( w io.Writer, v interface{}, indent string ) {
+        fo := v.([]uint16)
+        var fos string
+        switch fo[0] {
+        case 1:
+            fos = "lower column values in higher-order bits of bytes"
+        case 2:
+            fos = "lower column values in lower-order bits of bytes"
+        default:
+            fos = "Unknown bit ordering"
+        }
+        fmt.Fprintf( w, fos )
+    }
+    return ifd.storeUnsignedShorts( "Fill order", 1, ffo )
+}
+
+func (ifd *ifdd) storeTiffPlanarConfiguration( ) error {
+    fpc := func( w io.Writer, v interface{}, indent string ) {
+        pc := v.([]uint16)
+        var pcs string
+        switch pc[0] {
+        case 1:
+            pcs = "Chunky format (contiguous component values)"
+        case 2:
+            pcs = "Planar format (separate component planes)"
+        default:
+            pcs = "Unknown planar configuration"
+        }
+        fmt.Fprintf( w, pcs )
+    }
+    return ifd.storeUnsignedShorts( "Fill order", 1, fpc )
+}
+
 func (ifd *ifdd) store1Fraction1Decimal( name string ) error {
     f1f1d := func( w io.Writer, v interface{}, indent string ) {
-        f := v.([]unsignedRational)
+        f := v.([]UnsignedRational)
         fmt.Fprintf( w, "%.1f", float32(f[0].Numerator)/float32(f[0].Denominator) )
     }
     return ifd.storeUnsignedRationals( name, 1, f1f1d )
@@ -212,6 +283,18 @@ func (ifd *ifdd) storeTiffResolutionUnit( ) error {
     return ifd.storeUnsignedShorts( "Resolution Unit", 1, fmtv )
 }
 
+func (ifd *ifdd) storeTiffPageNumber( ) error {
+    fpn := func( w io.Writer, v interface{}, indent string ) {
+        pn := v.([]uint16)
+        if pn[1] == 0 {     // number of pages not available
+            fmt.Fprintf( w, "%d", pn[0] )
+        } else {
+            fmt.Fprintf( w, "%d/%d", pn[0], pn[1] )
+        }
+    }
+    return ifd.storeUnsignedShorts( "Page Number", 2, fpn )
+}
+
 func (ifd *ifdd) storeTiffYCbCrPositioning( ) error {
 
     fmtv := func( w io.Writer, v interface{}, indent string ) {
@@ -227,6 +310,32 @@ func (ifd *ifdd) storeTiffYCbCrPositioning( ) error {
     }
     return ifd.storeUnsignedShorts( "YCbCr Positioning", 1, fmtv )
 }
+
+func (ifd *ifdd) storePrimaryChromacities( ) error {
+
+    fpc := func( w io.Writer, v interface{}, indent string ) {
+        pc := v.([]UnsignedRational)
+        fmt.Fprintf( w, " RED(x) %f (%d/%d) RED(y) %f (%d/%d)\n",
+                     float32(pc[0].Numerator)/float32(pc[0].Denominator),
+                     pc[0].Numerator, pc[0].Denominator,
+                     float32(pc[1].Numerator)/float32(pc[1].Denominator),
+                     pc[1].Numerator, pc[1].Denominator )
+        fmt.Fprintf( w, "%s GREEN(x) %f (%d/%d) GREEN(y) %f (%d/%d)\n",
+                     indent,
+                     float32(pc[2].Numerator)/float32(pc[2].Denominator),
+                     pc[2].Numerator, pc[2].Denominator,
+                     float32(pc[3].Numerator)/float32(pc[3].Denominator),
+                     pc[3].Numerator, pc[3].Denominator )
+        fmt.Fprintf( w, "%s BLUE(x) %f (%d/%d) BLUE(y) %f (%d/%d)",
+                     indent,
+                     float32(pc[4].Numerator)/float32(pc[4].Denominator),
+                     pc[4].Numerator, pc[4].Denominator,
+                     float32(pc[5].Numerator)/float32(pc[5].Denominator),
+                     pc[5].Numerator, pc[5].Denominator )
+    }
+    return ifd.storeUnsignedRationals( "Primary Chromacities", 6, fpc )
+}
+
 
 func (ifd *ifdd) storeJPEGInterchangeFormat( ) error {
     offset, err := ifd.checkUnsignedLongs( 1 )
@@ -264,30 +373,59 @@ func storeTiffTags( ifd *ifdd ) error {
 //    fmt.Printf( "storeTiffTags: tag (%#04x) @offset %#04x type %s count %d\n",
 //                 ifd.fTag, ifd.sOffset-8, getTiffTString( ifd.fType ), ifd.fCount )
     switch ifd.fTag {
+    case _ImageWidth:
+        return ifd.storeTiffImageSize( "Image Width" )
+    case _ImageLength:
+        return ifd.storeTiffImageSize( "Image Length" )
+    case _BitsPerSample:
+        return ifd.storeUnsignedShorts( "Bits per Sample", 0, nil )
     case _Compression:
         return ifd.storeTiffCompression( )
+    case _PhotometricInterpretation:
+        return ifd.storeTiffPhotometricInterpretation( )
     case _FillOrder:
-
+        return ifd.storeTiffFillOrder( )
     case _ImageDescription:
-        return ifd.storeAsciiString( "ImageDescription" )
+        return ifd.storeAsciiString( "Image Description" )
     case _Make:
         return ifd.storeAsciiString( "Make" )
     case _Model:
         return ifd.storeAsciiString( "Model" )
+    case _StripOffsets:
+        return ifd.storeUnsignedShortsOrLongs( "Strip Offsets", 0, nil )
     case _Orientation:
         return ifd.storeTiffOrientation( )
+    case _SamplesPerPixel:
+        return ifd.storeUnsignedShorts( "Samples per Pixel", 1, nil )
+    case _RowsPerStrip:
+        return ifd.storeUnsignedShortsOrLongs( "Rows per Strip", 1, nil )
+    case _StripByteCounts:
+        return ifd.storeUnsignedShortsOrLongs( "Strip Byte Count", 1, nil )
     case _XResolution:
         return ifd.store1Fraction1Decimal( "XResolution " )
     case _YResolution:
         return ifd.store1Fraction1Decimal( "YResolution " )
+    case _PlanarConfiguration:
+        return ifd.storeTiffPlanarConfiguration( )
+
     case _ResolutionUnit:
         return ifd.storeTiffResolutionUnit( )
+    case _PageNumber:
+        return ifd.storeTiffPageNumber( )
+
     case _Software:
         return ifd.storeAsciiString( "Software" )
     case _DateTime:
         return ifd.storeAsciiString( "Date" )
+    case _Artist:
+        return ifd.storeAsciiString( "Artist" )
     case _HostComputer:
         return ifd.storeAsciiString( "HostComputer" )
+
+    case _WhitePoint:
+        return ifd.storeUnsignedRationals( "White Point", 2, nil )
+    case _PrimaryChromaticities:
+        return ifd.storePrimaryChromacities( )
 
     case _JPEGInterchangeFormat:
         return ifd.storeJPEGInterchangeFormat( )
@@ -401,7 +539,7 @@ func (ifd *ifdd) storeExifVersion( ) error {
 
 func (ifd *ifdd) storeExifExposureTime( ) error {
     fmtv := func( w io.Writer, v interface{}, indent string ) {
-        et := v.([]unsignedRational)
+        et := v.([]UnsignedRational)
         fmt.Fprintf( w, "%f seconds", float32(et[0].Numerator)/float32(et[0].Denominator) )
     }
     return ifd.storeUnsignedRationals( "Exposure Time", 1, fmtv )
@@ -454,7 +592,7 @@ func (ifd *ifdd) storeExifComponentsConfiguration( ) error {
 
 func (ifd *ifdd) storeExifSubjectDistance( ) error {
     fmtv := func( w io.Writer, v interface{}, indent string ) {
-        sd := v.([]unsignedRational)
+        sd := v.([]UnsignedRational)
         if sd[0].Numerator == 0 {
             fmt.Fprintf( w, "Unknown" )
         } else if sd[0].Numerator == 0xffffffff {
@@ -589,8 +727,14 @@ func (ifd *ifdd) storeExifMakerNote( ) error {
                 return p( offset )
             }
         }
+        if ifd.desc.Unknown != Stop {
+            if ifd.desc.Warn {
+                fmt.Printf( "storeExifMakerNote: Warning: unknown maker note\n")
+            }
+            return nil      // unknown maker notes cannot be stored
+        }
     }
-    return fmt.Errorf( "storeExifMakerNote: unknown maker\n")
+    return fmt.Errorf( "storeExifMakerNote: invalid maker note\n")
 }
 
 func (ifd *ifdd) storeExifUserComment( ) error {
@@ -816,7 +960,7 @@ func (ifd *ifdd) storeExifWhiteBalance( ) error {
 
 func (ifd *ifdd) storeExifDigitalZoomRatio( ) error {
     fmv := func( w io.Writer, v interface{}, indent string ) {
-        dzr := v.([]unsignedRational)
+        dzr := v.([]UnsignedRational)
         if dzr[0].Numerator == 0 {
             fmt.Fprintf( w, "not used" )
         } else if dzr[0].Denominator == 0 {
@@ -925,7 +1069,7 @@ func (ifd *ifdd) storeExifDistanceRange( ) error {
 }
 
 func (ifd *ifdd) storeExifLensSpecification( ) error {
-// LensSpecification is an array of ordered unsignedRational values:
+// LensSpecification is an array of ordered UnsignedRational values:
 //  minimum focal length
 //  maximum focal length
 //  minimum F number in minimum focal length
@@ -934,7 +1078,7 @@ func (ifd *ifdd) storeExifLensSpecification( ) error {
 //  When the minimum F number is unknown, the notation is 0/0.
 
     fmls := func( w io.Writer, v interface{}, indent string ) {
-        ls := v.([]unsignedRational)
+        ls := v.([]UnsignedRational)
 
         fmt.Fprintf( w, "minimum focal length: %.1f\n",
                     float32(ls[0].Numerator)/float32(ls[0].Denominator) )

@@ -194,6 +194,16 @@ const (                         // TIFF Types
     _Double
 )
 
+// UnsignedRational structure mapping to TIFF RATIONAL type
+type UnsignedRational struct {
+    Numerator, Denominator  uint32
+}
+
+// SignedRational structure mapping to TIFF SRATIONAL type
+type SignedRational struct {
+    Numerator, Denominator  int32
+}
+
 const (                 // TIFF Type sizes (signed or unsigned)
     _ASCIIChar      = 1
     _ByteSize       = 1
@@ -309,14 +319,14 @@ func (d *Desc) getSignedLongs( offset, count uint32 ) []int32 {
     return r
 }
 
-func (d *Desc) getUnsignedRationals( offset, count uint32 ) []unsignedRational {
-    r := make( []unsignedRational, count )
+func (d *Desc) getUnsignedRationals( offset, count uint32 ) []UnsignedRational {
+    r := make( []UnsignedRational, count )
     d.readTIFFData( offset, &r )
     return r
 }
 
-func (d *Desc) getSignedRationals( offset, count uint32 ) []signedRational {
-    r := make( []signedRational, count )
+func (d *Desc) getSignedRationals( offset, count uint32 ) []SignedRational {
+    r := make( []SignedRational, count )
     d.readTIFFData( offset, &r )
     return r
 }
@@ -652,30 +662,13 @@ func newDesc( data []byte, c *Control ) *Desc {
     return d
 }
 
-// Parse data for exif metadata and build up an exif descriptor.
-//
-// It takes a byte slice as input (data), a starting offset in that slice
-// (start) and the following number of bytes (dLen) that contains the exif
-// metadata.
-//
-// An EXIF header is expected at the starting offset and the whole metadata
-// must fit in the following number of bytes. If the metadata size is unknown,
-// dLen can be given as 0, in which case parsing will use the rest of the input
-// slice.
-//
-// It returns the descriptor in case of success or a non-nil error in case of
-// failure.
-func Parse( data []byte, start, dLen uint, ec *Control ) (desc *Desc, err error) {
-    if ! bytes.Equal( data[start:start+6], []byte( "Exif\x00\x00" ) ) {
-        return nil, fmt.Errorf( "Parse: invalid signature (%s)\n",
-                                string(data[0:6]) )
-    }
+// Parse starting at the tiff header
+func parseTiff( data []byte, ec *Control ) (desc *Desc, err error) {
 
-    // Exif\0\0 is followed immediately by TIFF header
-    d := newDesc( data[start+_originOffset:start+dLen-_originOffset], ec )
+    d := newDesc( data, ec )
     defer func ( ) {
         if err != nil {
-            err = fmt.Errorf( "Parse: %v", err )
+            err = fmt.Errorf( "parseTiff: %v", err )
         } else {
             desc = d
         }
@@ -699,6 +692,29 @@ func Parse( data []byte, start, dLen uint, ec *Control ) (desc *Desc, err error)
         _, d.root.next, err = d.storeIFD( THUMBNAIL, offset, storeTiffTags )
     }
     return
+}
+
+// Parse data for exif metadata and build up an exif descriptor.
+//
+// It takes a byte slice as input (data), a starting offset in that slice
+// (start) and the following number of bytes (dLen) that contains the exif
+// metadata.
+//
+// An EXIF header is expected at the starting offset and the whole metadata
+// must fit in the following number of bytes. If the metadata size is unknown,
+// dLen can be given as 0, in which case parsing will use the rest of the input
+// slice.
+//
+// It returns the descriptor in case of success or a non-nil error in case of
+// failure.
+func Parse( data []byte, start, dLen uint, ec *Control ) (desc *Desc, err error) {
+    if ! bytes.Equal( data[start:start+_originOffset], []byte( "Exif\x00\x00" ) ) {
+        return nil, fmt.Errorf( "Parse: invalid signature (%s)\n",
+                                string(data[0:6]) )
+    }
+
+    // Exif\0\0 is followed immediately by TIFF header
+    return parseTiff( data[start+_originOffset:start+dLen-_originOffset], ec )
 }
 
 var masks [256]byte
@@ -732,7 +748,7 @@ func Search( data []byte, start uint ) ([]byte, error) {
             return data[i-5:], nil
         }
     }
-    return nil, fmt.Errorf("search: did not find Exif header in data\n")
+    return data, fmt.Errorf("search: did not find Exif header in data\n")
 }
 
 // Read the file whose path name is given and parse the data.
@@ -740,6 +756,11 @@ func Search( data []byte, start uint ) ([]byte, error) {
 // It takes the path name (path) and a starting offset in that file.
 // It searches for the EXIF header from that starting offset, which
 // should therefore be given as 0 if it is unknown.
+//
+// If the exif signature "Exif\x00\x00" is not found, an attempt is made to
+// read instead a TIFF header without signature at the starting offset.
+// If this succeeds, the TIFF data is parsed and a reduced exif descriptor
+// is generated.
 //
 // It returns an exif descriptor in case of success or an error in
 // case of failure.
@@ -755,6 +776,11 @@ func Read( path string, start uint, ec *Control ) (d *Desc, err error) {
     }
     data, err = Search( data, start )
     if err != nil {
+        if ! bytes.Equal( data[0:2], []byte( "II" ) ) &&
+            ! bytes.Equal( data[0:2], []byte( "MM" ) ) {
+            return
+        }
+        d, err = parseTiff( data, ec )
         return
     }
     d, err = Parse( data, 0, uint(len(data)), ec )
@@ -998,4 +1024,68 @@ func (d *Desc)FormatIfds( w io.Writer, ifdIds []IfdId ) (n int, err error) {
     }
     n, err = cw.result()
     return
+}
+
+type SliceType uint8
+const (
+    NoValue SliceType = iota    // Not a slice value
+    String                      // slice of bytes converted in string
+    U8Slice                     // slice of uint8
+    U16Slice                    // slice of uint16
+    U32Slice                    // slice of uint32
+    URationalSlice              // slice of UnsignedRational
+
+    S8Slice                     // slice of int8
+    S16Slice                    // slice of int16
+    S32Slice                    // slice of int32
+    SRationalSlice              // slice of SignedRational
+)
+
+func (d *Desc)GetIfdTagValue( id IfdId,
+                              tag int ) ( SliceType, interface{}, error) {
+// TODO
+    if id >= _IFD_N {
+        return NoValue, nil,
+            fmt.Errorf( "GetIfdTagValue: id %d is not valid for an ifd\n", id )
+    }
+    ifd := d.ifds[id]
+    if ifd == nil {
+        return NoValue, nil,
+            fmt.Errorf( "GetIfdTagValue: id %d is absent\n", id )
+    }
+    if  tag < 0 || tag > 0xffff {
+        return NoValue, nil,
+                fmt.Errorf( "GetIfdTagValue: tag %d is out of range\n", tag )
+    }
+    for _, v := range( ifd.values ) {
+        if v != nil {
+            t := v.getTag()
+            if t == tTag(tag) {
+                switch v := v.(type) {
+                case * unsignedByteValue:
+                    if v.s {
+                        return String, string(v.v), nil
+                    }
+                    return U8Slice, v.v, nil
+                case * signedByteValue:
+                    return S8Slice, v.v, nil
+                case * unsignedShortValue:
+                    return U16Slice, v.v, nil
+                case * signedShortValue:
+                    return S16Slice, v.v, nil
+                case * unsignedLongValue:
+                    return U32Slice, v.v, nil
+                case * signedLongValue:
+                    return S32Slice, v.v, nil
+                case * unsignedRationalValue:
+                    return URationalSlice, v.v, nil
+                case * signedRationalValue:
+                    return SRationalSlice, v.v, nil
+                default:
+                    break
+                }
+            }
+        }
+    }
+    return NoValue, nil, fmt.Errorf( "GetIfdTagValue: not a slice of values\n")
 }

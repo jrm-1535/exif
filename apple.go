@@ -365,7 +365,7 @@ func (ifd *ifdd) storeAppleAccelerationVector( ) error {
     v, err := ifd.checkSignedRationals( 3 )
     if err == nil {
         p := func( w io.Writer,v interface{}, indent string ) {
-            av := v.([]signedRational)
+            av := v.([]SignedRational)
     /*
         AccelerationVector
         XYZ coordinates of the acceleration vector in units of g.  As viewed from

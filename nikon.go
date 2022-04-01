@@ -443,7 +443,7 @@ func (ifd *ifdd) storeNikon3LensType( ) error {
 
 func (ifd *ifdd) storeNikon3LensInfo( ) error {
     fli := func( w io.Writer, v interface{}, indent string ) {
-        li := v.([]unsignedRational)
+        li := v.([]UnsignedRational)
 // TODO
         fmt.Fprintf( w, "Hex %v", li )
     }
@@ -1060,7 +1060,7 @@ func (ifd *ifdd) storeNikon3RetouchInfo() error {
     return ifd.storeUndefinedAsUnsignedBytes( "Retouch Info", 0, fri )
 }
 
-func getRationalString( v unsignedRational) string {
+func getRationalString( v UnsignedRational) string {
     if v.Denominator == 0 {
         return "Inf"
     }
@@ -1069,7 +1069,7 @@ func getRationalString( v unsignedRational) string {
 
 func (ifd *ifdd) storeNikom3WhiteBalanceRBLevels() error {
     fwb := func( w io.Writer, v interface{}, indent string ) {
-        wb := v.([]unsignedRational)
+        wb := v.([]UnsignedRational)
         fmt.Fprintf( w, "%s %s %s %s",
                      getRationalString(wb[0]), getRationalString(wb[1]),
                      getRationalString(wb[2]), getRationalString(wb[3]) )

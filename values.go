@@ -24,12 +24,12 @@ type tEntry struct {
     _ASCIIString        => []uint8
     _UnsignedShort      => []uint16
     _UnsignedLong       => []uint32
-    _UnsignedRational   => []unsignedRational struct
+    _UnsignedRational   => []UnsignedRational struct
     _SignedByte         => []int8
     _Undefined          => transformed in actual type, from the tag value
     _SignedShort        => []int16
     _SignedLong         => []int32
-    _SignedRational     => []signedRational struct
+    _SignedRational     => []SignedRational struct
     _Float              => []float32
     _Double             => []float64
 
@@ -39,20 +39,12 @@ type tEntry struct {
                        -> ifdValue for embedded ifd or some maker notes
     []uint16           -> unsignedShortValue for _UnsignedShort(s)
     []uint32           -> unsignedLongValue for _UnsignedLong(s)
-    []unsignedRational -> unsignedRationalValue for _UnsignedRational(s)
+    []UnsignedRational -> unsignedRationalValue for _UnsignedRational(s)
     []int8             -> signedByteValue for _SignedByte(s)
     []int16            -> signedShortValue for _SignedShort(s)
     []int32            -> signedLongValue for _SignedLong(s)
-    []signedRational   -> signedRationalValue for _SignedRational(s)
+    []SignedRational   -> signedRationalValue for _SignedRational(s)
 */
-
-type unsignedRational struct {
-    Numerator, Denominator  uint32  // unexported type, but exported fields ;-)
-}
-
-type signedRational struct {
-    Numerator, Denominator  int32
-}
 
 // A tiffValue is defined as its entry definition followed by one of the
 // above types and implementing the following interface:
@@ -207,7 +199,7 @@ func (ifd *ifdd) checkSignedLongs( count uint32 ) ([]int32, error) {
 }
 
 func (ifd *ifdd) checkUnsignedRationals( 
-                                count uint32 ) ([]unsignedRational, error) {
+                                count uint32 ) ([]UnsignedRational, error) {
     if ifd.fType != _UnsignedRational {
         return nil, fmt.Errorf( "checkUnsignedRational: incorrect type (%s)\n",
                                 getTiffTString( ifd.fType ) )
@@ -222,7 +214,7 @@ func (ifd *ifdd) checkUnsignedRationals(
 }
 
 func (ifd *ifdd) checkSignedRationals(
-                                 count uint32 ) ([]signedRational, error) {
+                                 count uint32 ) ([]SignedRational, error) {
     if ifd.fType != _SignedRational {
         return nil, fmt.Errorf( "checkUnsignedRational: incorrect type (%s)\n",
                                 getTiffTString( ifd.fType ) )
@@ -251,7 +243,7 @@ func (tv *tVal)getTag( ) tTag {
     return tv.vTag
 }
 
-// TIFF Value definitions
+// TIFF Value definitions - all values embed tVal and have actual data a v field
 
 type descValue struct {     // used for some maker notes
             tVal
@@ -510,7 +502,7 @@ func formatSignedLongs( w io.Writer, v interface{}, indent string ) {
 }
 
 func formatUnsignedRationals( w io.Writer, v interface{}, indent string ) {
-    urv := v.([]unsignedRational)
+    urv := v.([]UnsignedRational)
     for i := 0; i < len(urv); i++ {
         if i > 0 { io.WriteString( w, "," ) }
         fmt.Fprintf( w, " %f (%d/%d)",
@@ -520,7 +512,7 @@ func formatUnsignedRationals( w io.Writer, v interface{}, indent string ) {
 }
 
 func formatSignedRationals( w io.Writer, v interface{}, indent string ) {
-    srv := v.([]signedRational)
+    srv := v.([]SignedRational)
     for i := 0; i < len(srv); i++ {
         if i > 0 { io.WriteString( w, "," ) }
         fmt.Fprintf( w, " %f (%d/%d)",
@@ -732,12 +724,12 @@ func (sl *signedLongValue)format( w io.Writer ) {
 
 type unsignedRationalValue struct {
         tVal
-    v  []unsignedRational
+    v  []UnsignedRational
 }
 func (ifd *ifdd) newUnsignedRationalValue(
                     name string,
                     f func( io.Writer, interface{}, string ),
-                    urVal []unsignedRational ) (ur *unsignedRationalValue) {
+                    urVal []UnsignedRational ) (ur *unsignedRationalValue) {
     ur = new( unsignedRationalValue )
     ur.ifd = ifd
     ur.fpr = f
@@ -763,12 +755,12 @@ func (ur *unsignedRationalValue)format( w io.Writer ) {
 
 type signedRationalValue struct {
         tVal
-    v   []signedRational
+    v   []SignedRational
 }
 func (ifd *ifdd) newSignedRationalValue(
                         name string,
                         f func( io.Writer, interface{}, string ),
-                        srVal []signedRational ) (sr *signedRationalValue) {
+                        srVal []SignedRational ) (sr *signedRationalValue) {
     sr = new( signedRationalValue )
     sr.ifd = ifd
     sr.fpr = f
@@ -918,6 +910,18 @@ func (ifd *ifdd) storeUnsignedLongs(
         ifd.storeValue( ifd.newUnsignedLongValue( name, p, values ) )
     }
     return err
+}
+
+func (ifd *ifdd) storeUnsignedShortsOrLongs(
+                            name string, count uint32,
+                            p func( io.Writer, interface{}, string) ) error {
+    switch ifd.fType {
+        case _UnsignedShort:
+            return ifd.storeUnsignedShorts( name, count, p )
+        case _UnsignedLong:
+            return ifd.storeUnsignedLongs( name, count, p )
+    }
+    return fmt.Errorf( "Illegal %s type %s\n", name, getTiffTString( ifd.fType ) )
 }
 
 func (ifd *ifdd) storeSignedLongs(
